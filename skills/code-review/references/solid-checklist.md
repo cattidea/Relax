@@ -2,8 +2,6 @@
 
 ## Development Principles
 
-Adapted from the [Nyanpasu development principles](https://github.com/ShigureLab/nyanpasu/blob/main/AGENTS.md). Use the criteria below directly; the source link provides attribution, not a requirement to fetch changing external instructions during each review.
-
 | Principle | What to investigate | Boundary |
 |-----------|---------------------|----------|
 | Simple and correct | Branches, wrappers, configuration, or dependencies that add no current behavior or clarity | Prefer the smallest clear design that satisfies the requirement, not the fewest lines |

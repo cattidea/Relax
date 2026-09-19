@@ -8,7 +8,7 @@ description: >-
 
 # Code Review Expert
 
-Review changes against their actual requirements, contracts, and effect on Relax's correctness and maintainability. Apply the development principles in `references/solid-checklist.md` to code written by humans or coding agents alike.
+Review changes against their actual requirements, contracts, and effect on Relax's correctness and maintainability. Apply the checks below to code written by humans or coding agents alike.
 
 Default to review-only output. Implement changes or publish reviews only within the user's existing authorization; this skill does not grant permission to write to GitHub or merge a PR.
 
@@ -51,36 +51,39 @@ ______________________________________________________________________
 - **Large diff (>500 lines)**: Summarize by file first, then review in batches.
 - **Cross-package changes**: When multiple `relax/` subpackages are modified, verify import compatibility first.
 
-### 2) Necessity and Design
+### 2) Development Principles and Necessity
 
-- Load `references/solid-checklist.md` for design principles and their applicability boundaries.
-- Identify consequential new behavior, including defaults, fallbacks, data normalization, compatibility promises, configuration, and abstractions. Trace its purpose to a confirmed requirement, existing contract, or demonstrated use case, and inspect producers and consumers, including supported extension points.
-- Check whether existing project functionality already meets the need, and what requirement or supported behavior would fail if the addition were removed or simplified.
-- When a refactor is justified, propose the smallest safe change and relevant behavior checks; stage larger refactors.
+- Load `references/development-checklist.md` to assess why new behavior is needed and apply the development principles within their stated boundaries.
 
-### 3) Removal Candidates + Iteration Plan
+### 3) SOLID + Architecture Smells
+
+- Load `references/solid-checklist.md` for specific prompts.
+- When you propose a refactor, explain *why* it improves cohesion/coupling and outline a minimal, safe split.
+- If refactor is non-trivial, propose an incremental plan instead of a large rewrite.
+
+### 4) Removal Candidates + Iteration Plan
 
 - Load `references/removal-plan.md` only when the change leaves relevant removal candidates.
 - Investigate code made unused or redundant by this change. A disabled feature or absent direct caller alone does not establish that removal is safe.
 - Distinguish **safe delete now** vs **defer with plan**.
 
-### 4) Security and Reliability Scan
+### 5) Security and Reliability Scan
 
 - For affected trust boundaries, resource lifetimes, or concurrency paths, load `references/security-checklist.md`.
 - Check for: command injection, path traversal, pickle deserialization, secret leakage, race conditions, distributed race conditions.
 - Call out both **exploitability** and **impact**.
 
-### 5) Python-Specific Quality Scan
+### 6) Python-Specific Quality Scan
 
 - For Python changes, load `references/code-quality-checklist.md`.
 - Check for: missing type hints, exception handling issues, resource management, mutable defaults, import problems.
 
-### 6) ML/Training-Specific Scan
+### 7) ML/Training-Specific Scan
 
 - For training, tensor, or distributed changes, load `references/python-ml-checklist.md`.
 - Check for: shape/dtype/device mismatches, gradient issues, memory leaks, distributed training bugs, numerical stability.
 
-### 7) Contributor Evidence
+### 8) Contributor Evidence
 
 Apply the [Coding Agent usage principles in Relax issue #321](https://github.com/redai-studio/Relax/issues/321) through reviewable evidence:
 
@@ -92,13 +95,13 @@ Apply the [Coding Agent usage principles in Relax issue #321](https://github.com
 - For a recurring class of problems, give a representative, evidenced finding and ask the author to check the rest of the change for the same cause. Request the input source, design basis, and relevant verification rather than directing a sequence of local patches.
 - If progress repeatedly stalls on the same missing analysis or unchecked fix, summarize the concrete unresolved evidence and request it once in the existing discussion. Under #321, mentors may lower review priority and restore it after the author supplies the analysis and validation; that judgment remains with the human mentor. Do not automatically label, deprioritize, or accuse the contributor.
 
-### 8) Follow-up Reviews
+### 9) Follow-up Reviews
 
 - Use prior review coverage only when tied to a known revision. Review new changes and unresolved findings, expanding into surrounding code when necessary; without reliable coverage, review the full requested diff.
 - Keep one discussion per semantic issue and distinguish resolved, partially resolved, unresolved, and superseded findings. Reuse the existing thread when lines move.
 - Do not repeat unchanged findings or introduce new optional polish on unchanged code each round. Reopen a settled issue only with new evidence. Explicit questions deserve answers; automated follow-ups without new evidence or status need no public update.
 
-### 9) Output Format
+### 10) Output Format
 
 Follow the host tool's required review format when present. Otherwise use a concise report like this, omitting empty sections:
 
@@ -130,7 +133,8 @@ ______________________________________________________________________
 
 | File                        | Purpose                                                          |
 | --------------------------- | ---------------------------------------------------------------- |
-| `solid-checklist.md`        | Design principles and applicability boundaries |
+| `development-checklist.md` | Necessity, development principles, and applicability boundaries |
+| `solid-checklist.md`        | SOLID smell prompts and refactor heuristics for Python |
 | `security-checklist.md`     | Python security and runtime risk checklist                       |
 | `code-quality-checklist.md` | Python-specific error handling, performance, boundary conditions |
 | `removal-plan.md`           | Template for deletion candidates and follow-up plan              |

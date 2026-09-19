@@ -1,19 +1,37 @@
-# Design Review Checklist (Relax Project)
+# SOLID & Code Smell Prompts (Relax Project)
 
-## Development Principles
+## SOLID Quick Reference
 
-| Principle | What to investigate | Boundary |
-|-----------|---------------------|----------|
-| Simple and correct | Branches, wrappers, configuration, or dependencies that add no current behavior or clarity | Prefer the smallest clear design that satisfies the requirement, not the fewest lines |
-| Handle realistic failures | Fallbacks for states excluded by established internal contracts, or defaults that conceal broken invariants | Validate external input at boundaries; preserve justified timeout, retry, and cleanup behavior for real I/O and worker failures |
-| Cohesive functions and interfaces | Mixed responsibilities, unclear inputs/outputs, or interfaces that force unsupported operations | Split by responsibility; function length alone is not a finding |
-| Preserve caller contracts | A supported implementation changes promised inputs, outputs, errors, or side effects | Check actual callers and approved behavior changes; a representation or inheritance choice alone is not a defect |
-| Prefer pure functions, immutable data, and explicit ownership | Hidden mutation of caller-owned data, implicit I/O or dependencies, or shared state with unclear ownership | Keep side effects explicit; owned in-place tensor operations can be appropriate when contracts, autograd, and performance justify them |
-| Refactor around real concepts or existing commonality | Repeated policy branches drifting apart, patch layers, or generic frameworks for hypothetical future needs | Prefer composition and delegation over inheritance (AGENTS.md: depth ≤ 2); a second use or duplicate count alone does not justify abstraction |
-| One authoritative source per fact | Derived values stored and updated independently, with inconsistent update or invalidation paths | Caches and snapshots need an explicit owner, lifetime, and consistency contract; justified caching is not inherently duplication |
+| Principle | Key Question | Red Flag |
+|-----------|-------------|----------|
+| **SRP** | "What is the single reason this module would change?" | File mixes unrelated concerns (e.g., data loading + loss computation + logging) |
+| **OCP** | "Can I add a new variant without touching existing code?" | Growing `if/elif/else` chains for new reward types, backends, etc. |
+| **LSP** | "Can I substitute any subclass without the caller knowing?" | `NotImplementedError` in overridden methods; `isinstance` checks for subclass type |
+| **ISP** | "Do all implementers use all methods?" | ABC with many abstract methods, most left as stubs by implementers |
+| **DIP** | "Can I swap the implementation without changing business logic?" | High-level logic directly instantiating concrete I/O / storage types |
 
-### Calibration Examples
+______________________________________________________________________
 
-- **Report:** two independently updated fields encode the same rollout state, and a cancellation path updates only one. **Do not report:** a snapshot deliberately captures state at a documented version boundary.
-- **Report:** a fallback converts a violated batch contract into apparently valid training data. **Do not report:** boundary validation rejects malformed external input, or a bounded retry handles a transient worker failure.
-- **Report:** repeated backend policy branches already disagree for a supported mode. **Do not report:** a short dispatch over a closed set of modes, or a cohesive function solely because it exceeds a line count.
+## Common Code Smells
+
+| Smell | Signs |
+|-------|-------|
+| **Long function** | Function >30 lines, multiple nesting levels |
+| **Feature envy** | Method uses more data from another class than its own |
+| **Data clumps** | Same group of parameters passed together repeatedly |
+| **Primitive obsession** | Using dicts instead of dataclasses for structured data |
+| **Shotgun surgery** | One change requires edits across many files |
+| **Dead code** | Unreachable or never-called code |
+| **Magic numbers** | Hardcoded values without named constants |
+
+______________________________________________________________________
+
+## Refactor Heuristics
+
+1. Split by responsibility, not by size
+2. Introduce abstraction only when needed (Rule of Three)
+3. Keep refactors incremental — isolate behavior before moving
+4. Preserve behavior first — add tests before restructuring
+5. Prefer composition over inheritance (AGENTS.md: hierarchy ≤ 2)
+6. Use dataclasses for data containers — avoid dicts when structure is known
+7. Prefer protocols over ABCs — structural subtyping is more Pythonic

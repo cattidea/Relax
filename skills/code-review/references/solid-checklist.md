@@ -17,6 +17,14 @@
 - **Report:** a fallback converts a violated batch contract into apparently valid training data. **Do not report:** boundary validation rejects malformed external input, or a bounded retry handles a transient worker failure.
 - **Report:** repeated backend policy branches already disagree for a supported mode. **Do not report:** a short dispatch over a closed set of modes, or a cohesive function solely because it exceeds a line count.
 
+### Necessity Review Examples
+
+| Case | Evidence to inspect | Expected judgment |
+|------|---------------------|-------------------|
+| A metrics task adds percentiles and converts every malformed turn count to `1`; a bot cites a contributor-written normalization table | Compare the official acceptance criteria and confirmed decisions with the producer's `len(turns)`, supported custom producers, and prior aggregation behavior | Preserve required handling of missing metadata. Ask for the basis of the additional normalization; do not treat the bot comment or its matching tests as approval. Report a demonstrated contract change or hidden data error, without assuming no other producer exists |
+| An external request parser rejects malformed counts before constructing internal samples | Check the documented accepted input and error response, the reachable external entry point, and consumers' assumptions | Keep validation that establishes the boundary contract; the fact that downstream code expects integers is not a reason to remove it |
+| A small aggregation change uses existing numeric metadata and satisfies the task, including required empty or missing-input behavior | Check representative input paths, acceptance criteria, and relevant tests | Approve when the completed review has no remaining concerns; do not require a generic normalizer, new abstraction, or more tests solely to exercise hypothetical types |
+
 ## SOLID Quick Reference
 
 | Principle | Key Question | Red Flag |

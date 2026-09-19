@@ -28,10 +28,10 @@ Read the applicable repository instructions, including `AGENTS.md`, for project 
 | ------ | -------- | --------------------------------------------------------------------------------- | ---------------------------------- |
 | **P0** | Critical | Immediate severe impact, such as widespread training corruption, data loss, or critical exposure | Block merge; urgent action |
 | **P1** | High     | Reachable serious regression in correctness, compatibility, reliability, or performance | Fix before merge |
-| **P2** | Medium   | Evidenced localized defect, material test gap, or concrete maintainability problem | Propose a scoped fix; maintainer decides timing |
+| **P2** | Medium   | Evidenced localized defect, material test gap, or concrete maintainability problem | Fix before acceptance when required; otherwise propose a scoped follow-up |
 | **P3** | Low      | Optional clarification, naming, documentation, or design refinement | Non-blocking suggestion |
 
-Assign severity by demonstrated impact. A SOLID smell, missing annotation, or preference alone is not P0/P1. Recommend REQUEST_CHANGES for evidenced P0/P1 findings; use COMMENT for P2/P3 findings or incomplete review. A completed review without remaining concerns can recommend APPROVE. Keep reviewer recommendations separate from actual GitHub review events and merge eligibility.
+Assign severity by demonstrated impact. A SOLID smell, missing annotation, or preference alone is not P0/P1. Separately decide whether a finding must be resolved in this PR: recommend REQUEST_CHANGES for evidenced P0/P1 findings, and for P2 findings that violate a confirmed requirement or contract, omit required validation, or introduce a concrete maintenance burden that prevents acceptance. State that basis without inflating severity. Use COMMENT for non-blocking findings, unresolved questions, or incomplete review; an unanswered question alone does not prove a defect. A completed review without remaining concerns can recommend APPROVE. Keep reviewer recommendations separate from actual GitHub review events and merge eligibility; maintainers retain the acceptance decision.
 
 ______________________________________________________________________
 
@@ -41,6 +41,7 @@ ______________________________________________________________________
 
 - Establish the requested scope: unstaged/staged changes, a commit range, or a PR. Use `git status -sb` and the corresponding diff; a clean local checkout does not mean a PR has no changes.
 - For a PR, read its description, linked requirements, current head/base, review threads, and CI. Verify that the checkout and diff match the reviewed head; recheck the head before publishing conclusions.
+- Establish which requirements are authoritative: distinguish the official task and maintainer-confirmed decisions from contributor proposals or expansions and bot suggestions. A linked issue, accepted code suggestion, or existing test does not by itself establish an approved requirement. Check relevant discussions for confirmation; keep an unresolved conflict explicit.
 - Use `rg` to find related modules, usages, and contracts.
 - Identify entry points, ownership boundaries, and critical paths (training loop, loss computation, checkpoint saving).
 
@@ -50,9 +51,11 @@ ______________________________________________________________________
 - **Large diff (>500 lines)**: Summarize by file first, then review in batches.
 - **Cross-package changes**: When multiple `relax/` subpackages are modified, verify import compatibility first.
 
-### 2) Development Principles and Architecture
+### 2) Necessity, Development Principles, and Architecture
 
 - Load `references/solid-checklist.md` for the six development principles, their boundaries, and SOLID prompts.
+- Identify consequential new behavior, including defaults, fallbacks, data normalization, compatibility promises, configuration, and abstractions. Trace its purpose to a confirmed requirement, existing contract, or demonstrated use case, and inspect producers and consumers, including supported extension points.
+- Ask what requirement, preserved behavior, or real use case would fail if the addition were removed or simplified. Seek evidence for keeping it before proposing removal. Distinguish a demonstrated semantic change or maintenance burden from a missing explanation; when the evidence is insufficient, ask a focused question rather than declaring the code unnecessary.
 - When proposing a refactor, identify the current responsibility, duplication, or state-ownership problem it solves and outline the smallest safe change.
 - If refactor is non-trivial, propose an incremental plan instead of a large rewrite.
 
@@ -84,9 +87,10 @@ Apply the [Coding Agent usage principles in Relax issue #321](https://github.com
 
 - Use the supplied task context for a local review; do not require a PR template where there is no PR. Ask only for information that materially affects the assessment.
 - Check that the author explains the problem or use case, key design choices, and verification. For a bug fix, seek a reproduction, regression test, or another concrete demonstration; for a feature or refactor, use its acceptance criteria or preserved behavior.
-- Check the actual commands, results, and relevant CI rather than treating a checked template box or "tests pass" as verification. Separate author-reported results from checks you ran or independently inspected. Tests should cover behavior or failure modes, not merely mirror the implementation.
+- Check the actual commands, results, and relevant CI rather than treating a checked template box or "tests pass" as verification. Separate author-reported results from checks you ran or independently inspected. Tests should cover required behavior or failure modes; tests that mirror a newly introduced policy do not establish that the policy is needed.
 - Identify missing validation proportionately. For multi-node GPU, CP/PP, or NPU changes, state what was not exercised and why; CPU mocks alone do not establish hardware integration correctness. A documentation-only change does not require training tests.
 - On follow-up, compare the correction with the original issue and its validation. A new commit or "fixed" reply does not establish resolution. Accept a reasoned disagreement when its evidence disproves the finding.
+- For a recurring class of problems, give a representative, evidenced finding and ask the author to check the rest of the change for the same cause. Request the input source, design basis, and relevant verification rather than directing a sequence of local patches; a bot recommendation also needs justification.
 - If progress repeatedly stalls on the same missing analysis or unchecked fix, summarize the concrete unresolved evidence and request it once in the existing discussion. Under #321, mentors may lower review priority and restore it after the author supplies the analysis and validation; that judgment remains with the human mentor. Do not automatically label, deprioritize, or accuse the contributor.
 
 ### 8) Follow-up Reviews

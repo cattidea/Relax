@@ -235,6 +235,7 @@ export default defineConfig({
           { text: 'Guide', link: '/en/guide/introduction' },
           { text: 'API', link: '/en/api/overview' },
           { text: 'Examples', link: '/en/examples/deepeyes' },
+          { text: 'Blog', link: '/en/blog/', activeMatch: '/en/blog/' },
           {
             text: 'Resources',
             items: [
@@ -362,6 +363,7 @@ export default defineConfig({
           { text: '指南', link: '/zh/guide/introduction' },
           { text: 'API', link: '/zh/api/overview' },
           { text: '示例', link: '/zh/examples/deepeyes' },
+          { text: '博客', link: '/zh/blog/', activeMatch: '/zh/blog/' },
           {
             text: '资源',
             items: [

@@ -4,8 +4,17 @@ date: '2026-09-27'
 author:
   name: 渡晓
   github: SigureMo
+co_authors:
+  - name: Relax Team
+    avatar: /logo.jpg
+pinned: true
 description: "Example article: a short title, a short summary, and nested headings."
 ---
+
+Start with **one concrete question**, then follow the entry point, call sites, and return values.
+A useful reading note can follow the same structure as a [debugging note](./example-debugging-notes.md).
+
+<!-- more -->
 
 ::: info Example article
 This article tests the blog layout. Scenarios and data are illustrative and do not represent actual project results.

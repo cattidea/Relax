@@ -1,6 +1,6 @@
 import { createContentLoader } from 'vitepress'
 
-export type Author = string | { name: string; github?: string }
+export type Author = string | { name: string; github?: string; avatar?: string }
 
 interface Post {
   title: string
@@ -8,17 +8,23 @@ interface Post {
   date: string
   authors: Author[]
   description: string
+  excerpt?: string
+  pinned: boolean
 }
 
 declare const data: Post[]
 export { data }
 
 export default createContentLoader(['en/blog/**/*.md', 'zh/blog/**/*.md'], {
+  excerpt: '<!-- more -->',
   transform(pages): Post[] {
     return pages
       .filter(({ url }) => !/^\/(en|zh)\/blog\/(?:$|page\/)/.test(url))
-      .map(({ url, frontmatter }) => {
+      .map(({ url, frontmatter, excerpt }) => {
         const { title, author, description } = frontmatter
+        if (frontmatter.pinned !== undefined && typeof frontmatter.pinned !== 'boolean') {
+          throw new Error(`${url}: pinned must be a boolean`)
+        }
         const coAuthors = frontmatter.co_authors ?? []
         if (!Array.isArray(coAuthors)) {
           throw new Error(`${url}: co_authors must be an array`)
@@ -48,6 +54,13 @@ export default createContentLoader(['en/blog/**/*.md', 'zh/blog/**/*.md'], {
           ) {
             throw new Error(`${url}: ${field}.github must be a GitHub username`)
           }
+          if (
+            typeof entry !== 'string' &&
+            entry.avatar !== undefined &&
+            (typeof entry.avatar !== 'string' || !/^(?:https?:\/\/|\/)[^\s]+$/.test(entry.avatar))
+          ) {
+            throw new Error(`${url}: ${field}.avatar must be an HTTP(S) URL or a site-root path`)
+          }
         }
         const timestamp = Date.parse(`${date}T00:00:00Z`)
         if (
@@ -58,8 +71,21 @@ export default createContentLoader(['en/blog/**/*.md', 'zh/blog/**/*.md'], {
           throw new Error(`${url}: blog date must be a valid YYYY-MM-DD date`)
         }
 
-        return { title, url, date, authors, description }
+        return {
+          title,
+          url,
+          date,
+          authors,
+          description,
+          excerpt,
+          pinned: frontmatter.pinned === true,
+        }
       })
-      .sort((a, b) => b.date.localeCompare(a.date) || a.url.localeCompare(b.url))
+      .sort(
+        (a, b) =>
+          Number(b.pinned) - Number(a.pinned) ||
+          b.date.localeCompare(a.date) ||
+          a.url.localeCompare(b.url)
+      )
   },
 })

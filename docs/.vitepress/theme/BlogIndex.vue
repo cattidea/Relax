@@ -16,6 +16,18 @@ const totalPages = computed(() => Math.ceil(localizedPosts.value.length / POSTS_
 const postsInPage = computed(() =>
   localizedPosts.value.slice((currentPage.value - 1) * POSTS_PER_PAGE, currentPage.value * POSTS_PER_PAGE)
 )
+// Excerpts also appear on paginated lists, so resolve links from the article URL.
+const formatExcerpt = (html: string, postUrl: string) =>
+  html.replace(/<(?:a|img)\b[^>]*>/g, (tag) =>
+    tag.replace(/\s(href|src)="([^"]*)"/g, (attribute, name: string, value: string) => {
+      if (!value || /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(value)) return attribute
+      if (value.startsWith('/')) {
+        return name === 'src' ? ` ${name}="${withBase(value)}"` : attribute
+      }
+      const url = new URL(value, `https://blog.invalid${withBase(postUrl)}`)
+      return ` ${name}="${url.pathname}${url.search}${url.hash}"`
+    })
+  )
 const formatDate = (date: string) =>
   new Date(`${date}T00:00:00Z`).toLocaleDateString(isChinese.value ? 'zh-CN' : 'en-US', {
     year: 'numeric',
@@ -54,11 +66,13 @@ const formatDate = (date: string) =>
       <div v-else class="posts">
         <article v-for="(post, index) in postsInPage" :key="post.url" class="post" :class="{ latest: currentPage === 1 && index === 0 }">
           <div class="metadata">
-            <span v-if="currentPage === 1 && index === 0" class="latest-label">{{ isChinese ? '最新发布' : 'LATEST' }}</span>
+            <span v-if="post.pinned" class="latest-label">{{ isChinese ? '置顶' : 'PINNED' }}</span>
+            <span v-else-if="currentPage === 1 && index === 0" class="latest-label">{{ isChinese ? '最新发布' : 'LATEST' }}</span>
             <time :datetime="post.date">{{ formatDate(post.date) }}</time>
           </div>
           <h3><a :href="withBase(post.url)">{{ post.title }}</a></h3>
-          <p class="summary">{{ post.description }}</p>
+          <div v-if="post.excerpt" class="summary vp-doc" v-html="formatExcerpt(post.excerpt, post.url)" />
+          <p v-else class="summary">{{ post.description }}</p>
           <div class="post-footer">
             <BlogAuthors class="authors" :authors="post.authors" compact />
             <a class="read-more" :href="withBase(post.url)" :aria-label="`${isChinese ? '阅读全文' : 'Read more'}: ${post.title}`">
@@ -160,6 +174,7 @@ h1 span {
 .post {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   padding: 32px;
   border: 1px solid var(--vp-c-divider);
   border-radius: 16px;
@@ -217,10 +232,24 @@ a:hover,
 }
 
 .summary {
+  min-width: 0;
   max-width: 800px;
   margin: 16px 0 28px;
   color: var(--vp-c-text-2);
   line-height: 1.8;
+}
+
+.summary :deep(> :first-child) {
+  margin-top: 0;
+}
+
+.summary :deep(> :last-child) {
+  margin-bottom: 0;
+}
+
+.summary :deep(img) {
+  max-width: 100%;
+  border-radius: 8px;
 }
 
 .post-footer {
@@ -282,7 +311,7 @@ a:hover,
   }
 
   .posts {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .post,

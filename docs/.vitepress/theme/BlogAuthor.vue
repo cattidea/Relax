@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { withBase } from 'vitepress'
 import type { Author } from './posts.data.mts'
 
 const props = defineProps<{ author: Author; compact?: boolean; avatarOnly?: boolean }>()
@@ -7,7 +8,10 @@ const name = computed(() => typeof props.author === 'string' ? props.author : pr
 const github = computed(() => typeof props.author === 'string' ? undefined : props.author.github)
 const label = computed(() => github.value ? `${name.value} (@${github.value})` : name.value)
 const githubUrl = computed(() => github.value ? `https://github.com/${encodeURIComponent(github.value)}` : undefined)
-const avatarUrl = computed(() => githubUrl.value ? `${githubUrl.value}.png?size=80` : undefined)
+const avatarUrl = computed(() => {
+  const customAvatar = typeof props.author === 'string' ? undefined : props.author.avatar
+  return customAvatar ? withBase(customAvatar) : githubUrl.value ? `${githubUrl.value}.png?size=80` : undefined
+})
 const avatarFailed = ref(false)
 watch(avatarUrl, () => { avatarFailed.value = false })
 </script>

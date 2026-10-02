@@ -4,8 +4,17 @@ date: '2026-09-27'
 author:
   name: 渡晓
   github: SigureMo
+co_authors:
+  - name: Relax 团队
+    avatar: /logo.jpg
+pinned: true
 description: "示例文章：短标题、短摘要和分层小标题。"
 ---
+
+从**一个具体问题**出发，沿着入口、调用点和返回值阅读。
+一份有用的源码笔记，也可以借鉴[问题排查记录](./example-debugging-notes.md)的组织方式。
+
+<!-- more -->
 
 ::: info 示例文章
 本文用于测试博客排版，场景和数据均为示例，不代表实际项目结果。

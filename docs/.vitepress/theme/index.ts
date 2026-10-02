@@ -13,6 +13,7 @@ import CallToAction from './CallToAction.vue'
 import MarqueeStrip from './MarqueeStrip.vue'
 import SwaggerUI from './SwaggerUI.vue'
 import BlogPostHeader from './BlogPostHeader.vue'
+import BlogPostNavigation from './BlogPostNavigation.vue'
 import './custom.css'
 
 export default {
@@ -22,6 +23,7 @@ export default {
       // Inject ASCII art background canvas behind all content
       'layout-top': () => h(AsciiBackground),
       'doc-before': () => h(BlogPostHeader),
+      'doc-after': () => h(BlogPostNavigation),
       // Inject typographic hero title before the default hero info
       'home-hero-info-before': () => h(AsciiHero),
       // Inject custom feature grid before the default VitePress features

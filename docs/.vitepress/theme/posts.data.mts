@@ -1,4 +1,5 @@
-import { createContentLoader } from 'vitepress'
+import { createContentLoader, createMarkdownRenderer, type SiteConfig } from 'vitepress'
+import { extractBlogExcerpt } from '../blog-excerpt'
 
 export type Author = string | { name: string; github?: string; avatar?: string }
 
@@ -7,7 +8,6 @@ interface Post {
   url: string
   date: string
   authors: Author[]
-  description: string
   excerpt?: string
   pinned: boolean
 }
@@ -15,8 +15,18 @@ interface Post {
 declare const data: Post[]
 export { data }
 
+const config = (globalThis as typeof globalThis & { VITEPRESS_CONFIG: SiteConfig }).VITEPRESS_CONFIG
+const md = await createMarkdownRenderer(
+  config.srcDir,
+  config.markdown,
+  config.site.base,
+  config.logger
+)
+
 export default createContentLoader(['en/blog/**/*.md', 'zh/blog/**/*.md'], {
-  excerpt: '<!-- more -->',
+  excerpt(file) {
+    file.excerpt = extractBlogExcerpt(md, file.content)
+  },
   transform(pages): Post[] {
     return pages
       .filter(({ url }) => !/^\/(en|zh)\/blog\/(?:$|page\/)/.test(url))
@@ -35,10 +45,13 @@ export default createContentLoader(['en/blog/**/*.md', 'zh/blog/**/*.md'], {
             ? frontmatter.date.toISOString().slice(0, 10)
             : frontmatter.date
 
-        for (const [field, value] of Object.entries({ title, description, date })) {
+        for (const [field, value] of Object.entries({ title, date })) {
           if (typeof value !== 'string' || !value.trim()) {
             throw new Error(`${url}: blog frontmatter requires a non-empty ${field}`)
           }
+        }
+        if (description !== undefined && (typeof description !== 'string' || !description.trim())) {
+          throw new Error(`${url}: description must be a non-empty string when provided`)
         }
         for (const [index, entry] of authors.entries()) {
           const field = index === 0 ? 'author' : `co_authors[${index - 1}]`
@@ -76,7 +89,6 @@ export default createContentLoader(['en/blog/**/*.md', 'zh/blog/**/*.md'], {
           url,
           date,
           authors,
-          description,
           excerpt,
           pinned: frontmatter.pinned === true,
         }

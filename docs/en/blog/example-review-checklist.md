@@ -4,7 +4,6 @@ date: '2026-09-24'
 author:
   name: 伊优
   github: DrRyanHuang
-description: "Example article: use a task list to review the title, links, and content."
 ---
 
 ::: info Example article

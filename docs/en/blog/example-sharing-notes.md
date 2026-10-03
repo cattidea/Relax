@@ -13,7 +13,6 @@ co_authors:
     github: DrRyanHuang
   - name: 无幻
     github: yangruipis
-description: 'Example article: a longer title for checking card wrapping, plus lists, quotations, code, and links between articles.'
 ---
 
 ::: info Example article

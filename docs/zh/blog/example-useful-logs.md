@@ -4,7 +4,6 @@ date: '2026-09-26'
 author:
   name: 禹哲
   github: NINGBENZHE
-description: "示例文章：从一段虚构日志出发，讨论上下文、事件名称与关联标识。"
 ---
 
 ::: info 示例文章

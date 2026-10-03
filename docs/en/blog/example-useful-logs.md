@@ -4,7 +4,6 @@ date: '2026-09-26'
 author:
   name: 禹哲
   github: NINGBENZHE
-description: "Example article: use fictional log lines to discuss context, event names, and correlation identifiers."
 ---
 
 ::: info Example article

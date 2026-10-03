@@ -9,7 +9,6 @@ co_authors:
     github: Aurelius84
   - name: 伊优
     github: DrRyanHuang
-description: 示例文章：展示表格、公式与提示块，也聊聊如何让一次比较更容易复查。
 ---
 
 ::: info 示例文章

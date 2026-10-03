@@ -1,6 +1,7 @@
 import taskLists from 'markdown-it-task-lists'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitepress'
+import blogDescription from './blog-excerpt'
 import sourceLinks from './plugins/source-links'
 
 // https://vitepress.dev/reference/site-config
@@ -216,6 +217,7 @@ export default defineConfig({
   markdown: {
     math: true,
     config(md) {
+      md.use(blogDescription)
       md.use(taskLists)
       md.use(sourceLinks, {
         repo: 'https://github.com/redai-studio/Relax',

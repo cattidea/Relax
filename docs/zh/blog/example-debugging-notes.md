@@ -7,7 +7,6 @@ author:
 co_authors:
   - name: 禹哲
     github: NINGBENZHE
-description: 示例文章：从现象、假设到验证结果，尝试用一篇短文讲清楚一次排查过程。
 ---
 
 ::: info 示例文章

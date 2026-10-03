@@ -4,7 +4,6 @@ date: '2026-09-28'
 author:
   name: 无幻
   github: yangruipis
-description: "Example article: organize an imagined asynchronous run by the order of its events."
 ---
 
 ::: info Example article

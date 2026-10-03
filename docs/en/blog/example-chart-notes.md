@@ -4,7 +4,6 @@ date: '2026-09-25'
 author:
   name: 月天
   github: Aurelius84
-description: "Example article: put units, measurement scope, and observations near the data. This longer summary also checks whether authors and reading links align when neighboring cards contain different amounts of text."
 ---
 
 ::: info Example article

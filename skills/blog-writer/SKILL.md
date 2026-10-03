@@ -40,7 +40,6 @@ description: Write, translate, update, and prepare bilingual Relax blog posts. U
 title: 文章标题
 date: '2026-10-02'
 author: 作者昵称
-description: 用一句话说明文章内容。
 ---
 
 开头段落可以包含 **强调**、链接和图片。
@@ -52,8 +51,9 @@ description: 用一句话说明文章内容。
 文章正文。
 ```
 
-- `title`、`date`、`author`、`description` 必填；日期为有效的 `YYYY-MM-DD`。
-  `description` 是纯文本，用于页面描述和没有富文本摘要时的列表摘要。
+- `title`、`date`、`author` 必填；日期为有效的 `YYYY-MM-DD`。
+  页面描述自动取正文摘要的纯文本，无需重复填写。
+  `description` 可选，仅在需要单独设置页面描述时使用，不影响列表摘要。
 - `author` 支持姓名字符串，或 `{ name, github?, avatar? }`。
   `github` 使用真实的、不带 `@` 的 GitHub 用户名；不要把昵称当用户名。
   `avatar` 为 HTTP(S) 图片地址或站内 `/images/...` 路径，可覆盖 GitHub 头像。
@@ -63,7 +63,8 @@ description: 用一句话说明文章内容。
   上一篇与下一篇仍按同语言文章的发布日期排列。
 - 用 `<!-- more -->` 标记富文本摘要的结尾。分隔符之前的 Markdown 在列表中渲染为静态 HTML，
   支持强调、链接、图片和公式；这部分在文章正文中仍然可见。
-  Vue 组件和脚本放在分隔符之后。没有分隔符时使用 `description`。
+  Vue 组件和脚本放在分隔符之后。没有分隔符时使用正文的第一个普通段落，
+  跳过标题、提示块、列表和引用块。
 - 摘要中的文章链接可写成 `./other-post.md`；图片使用 `/images/...`。
   `cover`、`category` 等字段当前没有对应博客功能，不应把它们写成发布要求。
 

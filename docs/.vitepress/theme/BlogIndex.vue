@@ -72,7 +72,6 @@ const formatDate = (date: string) =>
           </div>
           <h3><a :href="withBase(post.url)">{{ post.title }}</a></h3>
           <div v-if="post.excerpt" class="summary vp-doc" v-html="formatExcerpt(post.excerpt, post.url)" />
-          <p v-else class="summary">{{ post.description }}</p>
           <div class="post-footer">
             <BlogAuthors class="authors" :authors="post.authors" compact />
             <a class="read-more" :href="withBase(post.url)" :aria-label="`${isChinese ? '阅读全文' : 'Read more'}: ${post.title}`">

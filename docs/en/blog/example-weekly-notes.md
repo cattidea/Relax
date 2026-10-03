@@ -4,7 +4,6 @@ date: '2026-09-23'
 author:
   name: 无幻
   github: yangruipis
-description: "Example article: check paragraphs, a numbered list, and the return link at the end of the article listing."
 ---
 
 ::: info Example article

@@ -9,7 +9,6 @@ co_authors:
     github: Aurelius84
   - name: 伊优
     github: DrRyanHuang
-description: 'Example article: tables, equations, and callouts, with a few ideas for making comparisons easier to review.'
 ---
 
 ::: info Example article

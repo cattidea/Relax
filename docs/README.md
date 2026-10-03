@@ -139,7 +139,7 @@ with a Relax-themed layout informed by the [Vue](https://blog.vuejs.org/),
 [Hugging Face](https://huggingface.co/blog), and [PyTorch](https://pytorch.org/blog/) blogs.
 Add matching Markdown files at `en/blog/<slug>.md` and `zh/blog/<slug>.md` using the
 frontmatter below. Use a lowercase kebab-case slug, such as `hello-world`.
-Translate the title, description, and body in each version, with matching section
+Translate the title, summary, and body in each version, with matching section
 structure, publication date, and author order. For agent-assisted publishing, use
 the [blog-writer skill](../skills/blog-writer/SKILL.md).
 The list automatically displays each language's posts, pinned posts first and
@@ -176,7 +176,6 @@ co_authors:
   - name: Relax Team
     avatar: /logo.jpg
 pinned: true
-description: A short summary for the article list.
 ---
 
 An introduction with **emphasis** and a [link](./example-debugging-notes.md).
@@ -186,7 +185,7 @@ An introduction with **emphasis** and a [link](./example-debugging-notes.md).
 The rest of the article.
 ```
 
-`title`, `date`, `author`, and `description` are required; `co_authors` and `pinned` are optional.
+`title`, `date`, and `author` are required; `co_authors` and `pinned` are optional.
 Use `YYYY-MM-DD` for the publication date.
 The page renders its heading from `title`; start the body directly, without
 repeating an H1. Use H2 (`##`) for sections.
@@ -217,14 +216,16 @@ Relative article links resolve from the article, including on paginated lists.
 For summary images, use an HTTP(S) URL or a site-root path in `docs/public`, such as `/logo.jpg`.
 New article images follow the submodule conventions in [Images](#images-图片).
 Keep Vue components and scripts after the marker: summaries render static HTML.
-Without the marker, the list uses the plain-text `description`, which also remains the page description.
+Without the marker, the list uses the first ordinary paragraph, skipping headings, notices, lists, and blockquotes.
+The page description is generated from the summary's plain text, so there is no need to write it twice.
+An optional frontmatter `description` overrides the page description only; it does not change the list summary.
 The opening paragraphs remain visible in the full article.
 
 Keep `index.md` as the listing page. Files in the blog directories are published
 with the documentation site; add articles there when they are ready to be shared.
 The `page/` directory is reserved for pagination templates.
 
-`title`、`date`、`author` 和 `description` 为必填，`co_authors` 和 `pinned` 可省略。
+`title`、`date`、`author` 为必填，`co_authors` 和 `pinned` 可省略。
 发布日期使用 `YYYY-MM-DD` 格式。`index.md` 保留为列表页。
 页面会根据 `title` 自动显示大标题，正文无需重复写一级标题；章节从二级标题（`##`）开始。
 `author.name` 是显示昵称，`author.github` 是不带 `@` 的 GitHub 用户名。
@@ -248,7 +249,9 @@ The `page/` directory is reserved for pagination templates.
 摘要图片使用 HTTP(S) 地址或 `docs/public` 下的站内路径，例如 `/logo.jpg`。
 新文章图片遵循上文[图片规范](#images-图片)，存入图片子模块。
 Vue 组件和脚本放在分隔符之后，摘要只渲染静态 HTML。
-未添加分隔符时，列表继续使用纯文本 `description`，该字段也仍用作页面描述。
+未添加分隔符时，列表使用正文的第一个普通段落，跳过标题、提示块、列表和引用块。
+页面描述自动取摘要的纯文本，无需重复填写。
+如需单独设置页面描述，可在 frontmatter 中填写 `description`，它不会改变列表摘要。
 开头的摘要段落会保留在文章正文中。
 
 博客目录下的文章会随文档站一起发布，在文章可以公开时再放入该目录。

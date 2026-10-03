@@ -4,7 +4,6 @@ date: '2026-09-29'
 author:
   name: 伊优
   github: DrRyanHuang
-description: "Example article: capture inputs, environment, and steps so the next review does not start from scratch."
 ---
 
 ::: info Example article

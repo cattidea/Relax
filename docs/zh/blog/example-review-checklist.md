@@ -4,7 +4,6 @@ date: '2026-09-24'
 author:
   name: 伊优
   github: DrRyanHuang
-description: "示例文章：用任务列表整理标题、链接和内容检查项。"
 ---
 
 ::: info 示例文章

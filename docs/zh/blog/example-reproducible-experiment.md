@@ -4,7 +4,6 @@ date: '2026-09-29'
 author:
   name: 伊优
   github: DrRyanHuang
-description: "示例文章：记录输入、环境和运行步骤，让下一次复查不必从头开始。"
 ---
 
 ::: info 示例文章

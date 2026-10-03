@@ -8,7 +8,6 @@ co_authors:
   - name: Relax 团队
     avatar: /logo.jpg
 pinned: true
-description: "示例文章：短标题、短摘要和分层小标题。"
 ---
 
 从**一个具体问题**出发，沿着入口、调用点和返回值阅读。

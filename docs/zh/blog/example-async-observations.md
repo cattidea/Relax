@@ -4,7 +4,6 @@ date: '2026-09-28'
 author:
   name: 无幻
   github: yangruipis
-description: "示例文章：用事件顺序整理一段假想的异步执行过程。"
 ---
 
 ::: info 示例文章

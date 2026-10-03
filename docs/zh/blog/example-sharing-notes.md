@@ -13,7 +13,6 @@ co_authors:
     github: DrRyanHuang
   - name: 无幻
     github: yangruipis
-description: 示例文章：用一个较长的标题检查卡片换行，并演示列表、引用、代码和文章间链接。
 ---
 
 ::: info 示例文章

@@ -8,7 +8,6 @@ co_authors:
   - name: Relax Team
     avatar: /logo.jpg
 pinned: true
-description: "Example article: a short title, a short summary, and nested headings."
 ---
 
 Start with **one concrete question**, then follow the entry point, call sites, and return values.

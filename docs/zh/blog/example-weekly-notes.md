@@ -4,7 +4,6 @@ date: '2026-09-23'
 author:
   name: 无幻
   github: yangruipis
-description: "示例文章：在列表末尾检查普通段落、编号列表与返回入口。"
 ---
 
 ::: info 示例文章

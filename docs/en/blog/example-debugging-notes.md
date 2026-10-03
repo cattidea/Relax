@@ -7,7 +7,6 @@ author:
 co_authors:
   - name: 禹哲
     github: NINGBENZHE
-description: 'Example article: a short investigation note that connects symptoms, hypotheses, and observations.'
 ---
 
 ::: info Example article

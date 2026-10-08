@@ -99,7 +99,7 @@ pytest tests/                        # 测试
 ```
 
 - 提交遵循 Conventional Commits（`feat:`, `fix:`, `docs:`），详见 `git-commit` skill
-- 仅创建本地 commit，不 push
+- 默认仅创建本地 commit；用户授权 push 或创建 PR 时，遵循 `relax-github-workflow` skill
 - 测试命名：`test_<module>_<behavior>()`，GPU 测试用 `@pytest.mark.skipif` 优雅跳过
 
 ## Distributed Code Rules
@@ -119,17 +119,19 @@ pytest tests/                        # 测试
 
 Fire the appropriate **expert subagent** or **load a skill** based on what you're working on. Experts are read-only consultants with deep domain knowledge; skills are step-by-step implementation guides.
 
-| Working on...                                | Fire subagent      | Load skill        |
-| -------------------------------------------- | ------------------ | ----------------- |
-| Megatron backend (TP/PP/CP/EP)               | `megatron-expert`  |                   |
-| RL algorithms (GRPO/PPO/DAPO/GSPO/SAPO)      | `algorithm-expert` |                   |
-| Task Launch & service deployment             | `launcher-expert`  |                   |
-| Ray framework (Core, Serve, Jobs, placement) | `ray-expert`       |                   |
-| Development & code changes                   | `ray-expert`       | `dev`             |
-| Agentic rollout integration, runtime & hangs | `agentic-expert`   | `agentic-rollout` |
-| Distributed training hang debugging          | `ray-expert`       | `debug-hang`      |
-| Code review of git changes                   | --                 | `code-review`     |
-| Creating new skills                          | --                 | `creating-skills` |
-| Git commits                                  | --                 | `git-commit`      |
+| Working on...                                | Fire subagent      | Load skill              |
+| -------------------------------------------- | ------------------ | ----------------------- |
+| Megatron backend (TP/PP/CP/EP)               | `megatron-expert`  |                         |
+| RL algorithms (GRPO/PPO/DAPO/GSPO/SAPO)      | `algorithm-expert` |                         |
+| Task Launch & service deployment             | `launcher-expert`  |                         |
+| Ray framework (Core, Serve, Jobs, placement) | `ray-expert`       |                         |
+| Development & code changes                   | `ray-expert`       | `dev`                   |
+| Agentic rollout integration, runtime & hangs | `agentic-expert`   | `agentic-rollout`       |
+| Distributed training hang debugging          | `ray-expert`       | `debug-hang`            |
+| Code review of git changes                   | --                 | `code-review`           |
+| Creating new skills                          | --                 | `creating-skills`       |
+| Git commits                                  | --                 | `git-commit`            |
+| GitHub contribution, PRs & review follow-up  | --                 | `relax-github-workflow` |
+| GitHub required checks & CI operations       | --                 | `relax-github-ci`       |
 
 **How to fire an expert**: task(subagent_type="megatron-expert", load_skills=\[\], run_in_background=true, prompt="...")

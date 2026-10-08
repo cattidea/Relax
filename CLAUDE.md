@@ -79,4 +79,5 @@ When unsure, leave `TODO(agent)` comment and explain constraints.
 
 ## Commits
 
-Follow `skills/git-commit/SKILL.md`. Only create local commits, never push.
+Follow `skills/git-commit/SKILL.md`. Create local commits by default. When the user authorizes pushing or
+creating a PR, follow `skills/relax-github-workflow/SKILL.md`; use `skills/relax-github-ci/SKILL.md` for CI operations.

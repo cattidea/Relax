@@ -1,15 +1,14 @@
 ---
 name: git-commit
 description: >-
-  Creates git commits following Conventional Commits format with type/scope/subject
-  and detailed markdown body. Use when user wants to commit changes, create commit,
-  save work, or stage and commit. Enforces project-specific conventions from CLAUDE.md.
-  Each change type gets its own markdown heading (# emoji + type), with detailed item lists under each.
+  Creates git commits following Conventional Commits with an optional scope and body.
+  Use when user wants to commit changes, create commit, save work, or stage and commit.
+  Verifies intended staged changes and pre-commit checks before creating local commits.
 ---
 
 # Git commit
 
-Creates git commits following Conventional Commits format with rich markdown body.
+Creates git commits following Conventional Commits. Read `AGENTS.md` and `CLAUDE.md` for project constraints.
 
 ## Recent project commits
 
@@ -36,7 +35,7 @@ git add <files>
 git diff --cached --stat
 git diff --stat
 
-# 4. Create commit with detailed markdown body
+# 4. Create commit from the prepared message
 git commit -F /tmp/commitmsg.txt
 ```
 
@@ -54,18 +53,25 @@ git commit -F /tmp/commitmsg.txt
 ### 1. Subject line (first line)
 
 ```
-type(scope): concise imperative description
+<type>[optional scope]: <description>
 ```
+
+Use a scope when it helps identify the affected area. Both `fix: handle empty batches` and
+`fix(rollout): handle empty batches` are valid. Prefer a concise, imperative subject; about 50 characters
+is a writing guideline, not a hard limit. Use the same format for PR titles, which become squash commit subjects.
+
+Project types are `feat`, `fix`, `docs`, `style`, `perf`, `refactor`, `test`, `ci`, `build`, and `chore`.
 
 ### 2. Blank line
 
-A mandatory blank line separating the subject from the body.
+Separate the subject from an optional body or footer with a blank line.
 
-### 3. Markdown body (required for all non-trivial commits)
+### 3. Optional body
 
-Use first-level headings (`#`) for each change type, second-level headings (`##`) for specific changes, bullet points for details, and `---` separator between multiple types.
+Add a body when the motivation, design choices, or validation need more context. Plain paragraphs or bullet points
+are sufficient. For a longer message, the headings and emoji below are optional formatting examples.
 
-**Type-to-emoji mapping:**
+**Optional type-to-emoji mapping:**
 
 | Type     | Emoji | Heading Format              |
 | -------- | ----- | --------------------------- |
@@ -78,9 +84,9 @@ Use first-level headings (`#`) for each change type, second-level headings (`##`
 | ci       | 🔧    | `# 🔧 CI/CD`                |
 | chore    | 🔩    | `# 🔩 Chore`                |
 | style    | 🎨    | `# 🎨 Style`                |
-| security | 🔒    | `# 🔒 Security`             |
+| build    | 🏗️    | `# 🏗️ Build`                |
 
-**Multi-type commits**: Title uses the primary type; body uses a separate `#` heading with emoji for each type, separated by `---`.
+**Multi-type commits**: Use the primary type in the subject. A longer body can group related details by change type.
 
 **Multi-type body example:**
 
@@ -145,12 +151,13 @@ rm /tmp/commitmsg.txt
 
 - **ALWAYS** run `pre-commit run --all-files --show-diff-on-failure` before `git commit`, then `git add` again to stage any auto-fixed changes
 - **ALWAYS** verify staged contents with `git diff --cached --stat` before committing
-- **ALWAYS** include scope in parentheses (kebab-case)
+- Use an optional scope in parentheses when it adds useful context
 - **ALWAYS** use present tense imperative verb for the subject
-- **ALWAYS** include a markdown body with heading(s) for non-trivial commits
+- Add a body when it explains context not evident from the subject and diff
 - **ALWAYS** prefer `git commit -F <tmpfile>` for commits with markdown body
 - **NEVER** stage unrelated untracked files or unstaged edits while creating a commit
 - **NEVER** end subject with a period
-- **NEVER** exceed 50 chars in the subject line
+- Prefer a concise subject without shortening it at the expense of clarity
 - **NEVER** use generic messages ("update code", "fix bug", "changes")
-- **NEVER** push -- only create local commits. The user will push when ready.
+- By default, only create local commits. When the user authorizes pushing or creating a PR, follow
+  [Relax GitHub workflow](../relax-github-workflow/SKILL.md) for publication.

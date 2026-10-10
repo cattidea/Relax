@@ -65,20 +65,22 @@ Separate the subject from an optional body or footer with a blank line.
 
 Include a body for non-trivial commits to explain the motivation, design choices, or validation. Plain paragraphs or bullet points are sufficient. Prefer Markdown headings when they help organize a longer body; emoji are optional formatting examples.
 
-**Optional type-to-emoji mapping:**
+Choose optional emoji headings using [Gitmoji](https://gitmoji.dev/) meanings. The table gives examples: 🎨 for formatting, 👷 for CI, 🔧 for configuration, and 📦️ for package changes; dependency upgrades can use ⬆️.
+
+**Optional type-to-emoji examples:**
 
 | Type     | Emoji | Heading Format              |
 | -------- | ----- | --------------------------- |
-| feat     | ⭐    | `# ⭐ Feature`              |
+| feat     | ✨    | `# ✨ Feature`              |
 | fix      | 🐛    | `# 🐛 Bug Fix`              |
 | refactor | ♻️    | `# ♻️ Refactor`             |
-| perf     | ⚡    | `# ⚡ Performance`          |
+| perf     | ⚡️   | `# ⚡️ Performance`         |
 | test     | ✅    | `# ✅ Tests`                |
 | docs     | 📝    | `# 📝 Documentation`        |
-| ci       | 🔧    | `# 🔧 CI/CD`                |
-| chore    | 🔩    | `# 🔩 Chore`                |
+| ci       | 👷    | `# 👷 CI/CD`                |
+| chore    | 🔧    | `# 🔧 Chore`                |
 | style    | 🎨    | `# 🎨 Style`                |
-| build    | 🏗️    | `# 🏗️ Build`                |
+| build    | 📦️   | `# 📦️ Build`               |
 
 **Multi-type commits**: Use the primary type in the subject. A longer body can group related details by change type.
 
@@ -112,7 +114,7 @@ Include a body for non-trivial commits to explain the motivation, design choices
 **Single-type body example:**
 
 ```markdown
-# ⭐ Feature
+# ✨ Feature
 
 ## Add user endpoints
 
@@ -126,7 +128,7 @@ Include a body for non-trivial commits to explain the motivation, design choices
 ```bash
 printf 'feat(skills): add code-review skill with checklists
 
-# ⭐ Feature
+# ✨ Feature
 
 ## Add code-review skill with reference documentation
 

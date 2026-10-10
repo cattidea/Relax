@@ -70,8 +70,7 @@ test:
 	pytest tests/
 
 lint:
-	flake8 relax/
-	mypy relax/
+	ruff check relax/
 
 format: # develop ## Code format using pre-commit tools
 	@which pre-commit 2>&1 > /dev/null || python -m pip install pre-commit==3.8.0

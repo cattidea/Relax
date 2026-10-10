@@ -38,7 +38,7 @@ watch(avatarUrl, () => { avatarFailed.value = false })
       decoding="async"
       @error="avatarFailed = true"
     />
-    <span v-else class="avatar fallback" aria-hidden="true">{{ name.slice(0, 1) }}</span>
+    <span v-else class="avatar fallback" aria-hidden="true">{{ [...name][0] }}</span>
     <span class="details">
       <span class="name">{{ name }}</span>
       <span v-if="github" class="github">@{{ github }}</span>

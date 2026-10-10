@@ -10,8 +10,7 @@ co_authors:
 pinned: true
 ---
 
-Start with **one concrete question**, then follow the entry point, call sites, and return values.
-A useful reading note can follow the same structure as a [debugging note](./example-debugging-notes.md).
+Start with **one concrete question**, then follow the entry point, call sites, and return values. A useful reading note can follow the same structure as a [debugging note](./example-debugging-notes.md).
 
 <!-- more -->
 

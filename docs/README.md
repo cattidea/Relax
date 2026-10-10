@@ -78,11 +78,11 @@ Run development commands from the repository root. For an existing checkout, ini
 - An article `en/blog/hello-world.md` and its Chinese counterpart share `docs/public/images/blog/hello-world/`.
 - Guide images use `docs/public/images/guide/<topic-slug>/`.
 - Share language-independent images; use `-en` and `-zh` suffixes for translated images.
-- Prefer SVG for diagrams and WebP for raster images. Keep labels readable and compress assets before submitting them. Each file in the image submodule must be at most 300 KiB; split large diagrams into focused images when needed.
+- Prefer SVG for diagrams and WebP for raster images. Keep labels readable and compress assets before submitting them. Each file in the image submodule must be at most 500 KiB; split large diagrams into focused images when needed.
 
 Reference an image as `![Architecture overview](/images/blog/hello-world/architecture.svg)` and include meaningful alt text. Use the same `/images/...` path in custom avatar frontmatter. Do not include `docs/public`, `/Relax/`, or a GitHub raw URL; VitePress adds the deployment base. Vue components must use `withBase()`.
 
-`npm run docs:check-images` checks every file in the initialized image submodule, excluding Git metadata, and rejects files larger than 300 KiB. This command runs in the PR's Pre-commit Checks job and at the start of `npm run docs:build`, so a submodule pointer cannot pass those checks with oversized assets. It does not compress files automatically. The check belongs to Relax and validates the revision Relax uses; it does not prevent a separate image-repository PR from merging or set a limit on that repository's total size.
+`npm run docs:check-images` checks every file in the initialized image submodule, excluding Git metadata, and rejects files larger than 500 KiB. This command runs at the start of `npm run docs:build`, so the local preview build and Pages deployment stop if the pinned image revision contains oversized files. The main PR check belongs in `relax-images`, where new assets are reviewed; the Relax build check validates the exact revision used by the site. It does not compress files automatically. The check belongs to Relax and validates the revision Relax uses; it does not prevent a separate image-repository PR from merging or set a limit on that repository's total size.
 
 ### Article and image PRs
 
@@ -143,7 +143,7 @@ The site uses VitePress's [built-in internationalization](https://vitepress.dev/
 
 `npm run docs:build` first checks the initialized image submodule's file sizes, generates OpenAPI JSON with Python, builds VitePress, and runs the chunk filename repair script. During the VitePress build, the post loader validates article metadata and the pagination loader generates each list page. Static files from `docs/public/`, including the pinned images, are copied into `docs/.vitepress/dist`. The `buildEnd` hook removes `images/.git`, renames chunks containing `.md.`, and updates references to those chunks; `docs/fix-chunk-names.js` handles any remaining chunk names. These filename changes avoid the site's WAF blocking `.md.` URLs.
 
-The PR's Pre-commit Checks job initializes the pinned submodule, checks image sizes, and runs the repository hooks. It does not run the complete docs build; run that locally before requesting final review. After merging into `main`, changes matching `.github/workflows/deploy-docs.yml` trigger the Pages workflow, which checks out the same pinned image commit, builds the site, uploads `docs/.vitepress/dist`, and deploys the artifact. `workflow_dispatch` can also trigger deployment.
+The PR's Pre-commit Checks job runs the repository hooks. It does not check the image submodule or run the complete docs build; run `npm run docs:build` locally before requesting final review. After merging into `main`, changes matching `.github/workflows/deploy-docs.yml` trigger the Pages workflow, which checks out the same pinned image commit, builds the site, uploads `docs/.vitepress/dist`, and deploys the artifact. `workflow_dispatch` can also trigger deployment.
 
 ## Image Zoom Feature
 

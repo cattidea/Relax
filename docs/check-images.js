@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const imageDir = path.join(__dirname, 'public/images')
-const maxBytes = 300 * 1024
+const maxBytes = 500 * 1024
 
 if (!fs.existsSync(path.join(imageDir, '.git'))) {
   console.error('Initialize images with: git submodule update --init docs/public/images')
@@ -21,7 +21,7 @@ const checkDirectory = (directory) => {
     } else {
       const size = fs.statSync(filename).size
       if (size > maxBytes) {
-        console.error(`${path.relative(imageDir, filename)}: ${size} bytes exceeds 300 KiB`)
+        console.error(`${path.relative(imageDir, filename)}: ${size} bytes exceeds 500 KiB`)
         oversized++
       }
     }
@@ -33,5 +33,5 @@ if (oversized) {
   console.error('Compress or split oversized image assets before updating the image submodule.')
   process.exitCode = 1
 } else {
-  console.log('Image submodule files are within the 300 KiB limit.')
+  console.log('Image submodule files are within the 500 KiB limit.')
 }

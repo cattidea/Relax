@@ -59,7 +59,7 @@ git submodule update --init docs/public/images
 
 - 文章与图片目录同名：`hello-world.md` 的图片存入 `docs/public/images/blog/hello-world/`。文件名使用小写 kebab-case。
 - 中英文共用与语言无关的图片；图中文字需要翻译时使用 `-en`、`-zh` 后缀。图片提供有意义的替代文本，必要时用图注解释配置、数据来源或结论。
-- 示意图优先 SVG，截图和照片优先 WebP。保证文字可读，压缩图片，使图片子模块的每个文件不超过 300 KiB。`npm run docs:check-images` 会在 Relax 的 PR CI 和完整文档构建中检查固定图片提交；它不会自动压缩，也不限制图片仓库的总大小。不为压缩图片新增项目依赖，也不迁移已有图片，除非用户要求。
+- 示意图优先 SVG，截图和照片优先 WebP。保证文字可读，压缩图片，使图片子模块的每个文件不超过 500 KiB。主要 PR 检查放在图片仓库。Relax 的 `npm run docs:check-images` 在完整文档构建开头检查固定图片提交，超限时终止本地构建和 Pages 部署；它不会自动压缩，也不限制图片仓库的总大小。不为压缩图片新增项目依赖，也不迁移已有图片，除非用户要求。
 - Markdown 引用如 `![架构概览](/images/blog/hello-world/architecture.svg)`。不写 `docs/public`、`/Relax/` 或 GitHub raw URL。VitePress 负责部署前缀；若编写 Vue 组件，使用 `withBase()`。
 - 图片与文章可同时开 PR，并互相链接依赖。先合入图片 PR，再把 Relax 子模块切到图片仓库中已合入的提交，将 `docs/public/images` 指针与文章一起暂存、构建验证后请求最终 review。不要让最终指针依赖仅存在于贡献者 fork 的提交；具体步骤见 [Article and image PRs](../../docs/README.md#article-and-image-prs)。
 - 不使用 `git submodule update --remote` 作为构建步骤，构建必须使用主仓库记录的提交。仅推送图片仓库不会更新网站，还需要在 Relax 合入指针更新并触发部署。

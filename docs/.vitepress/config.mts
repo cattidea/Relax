@@ -260,13 +260,11 @@ export default defineConfig({
                 { text: 'Customize Training', link: '/en/guide/customize-training' },
                 { text: 'Adding an Algorithm', link: '/en/guide/adding-an-algorithm' },
                 { text: 'SFT Training', link: '/en/guide/sft-training' },
+                { text: 'DPO Training', link: '/en/guide/dpo-training' },
+
                 { text: 'MTP Training', link: '/en/guide/mtp-rl-training' },
                 { text: 'PPO Training', link: '/en/guide/ppo-training' },
                 { text: 'REINFORCE++', link: '/en/guide/reinforce-plus-plus' },
-                {
-                  text: 'REINFORCE++ Report',
-                  link: '/en/guide/reinforce-plus-plus-training-report',
-                },
                 { text: 'Model Checkpoint Conversion', link: '/en/guide/model-conversion' },
                 { text: 'Configuration', link: '/en/guide/configuration' },
               ],
@@ -288,6 +286,8 @@ export default defineConfig({
                 { text: 'Agentic KV Scheduling', link: '/en/guide/agentic-kv-scheduling' },
                 { text: 'Hybrid Training Mode', link: '/en/guide/hybrid-training' },
                 { text: 'Elastic Rollout Scaling', link: '/en/guide/elastic-rollout' },
+
+                { text: 'KEDA Autoscaling', link: '/en/guide/autoscaler-k8s-keda' },
                 { text: 'Dynamic Context Parallelism', link: '/en/guide/dynamic-context-parallel' },
                 { text: 'Metrics Service', link: '/en/guide/metrics-service-detailed' },
                 { text: 'Notification System', link: '/en/guide/notification-system' },
@@ -388,13 +388,11 @@ export default defineConfig({
                 { text: '自定义训练', link: '/zh/guide/customize-training' },
                 { text: '接入新算法', link: '/zh/guide/adding-an-algorithm' },
                 { text: 'SFT 训练', link: '/zh/guide/sft-training' },
+                { text: 'DPO 训练', link: '/zh/guide/dpo-training' },
+
                 { text: 'MTP 训练', link: '/zh/guide/mtp-rl-training' },
                 { text: 'PPO 训练', link: '/zh/guide/ppo-training' },
                 { text: 'REINFORCE++', link: '/zh/guide/reinforce-plus-plus' },
-                {
-                  text: 'REINFORCE++ 训练与数值验证报告',
-                  link: '/zh/guide/reinforce-plus-plus-training-report',
-                },
                 { text: '模型 Checkpoint 转换', link: '/zh/guide/model-conversion' },
                 { text: '配置说明', link: '/zh/guide/configuration' },
               ],
@@ -416,6 +414,8 @@ export default defineConfig({
                 { text: 'Agentic KV 调度', link: '/zh/guide/agentic-kv-scheduling' },
                 { text: 'Hybrid 混合训练模式', link: '/zh/guide/hybrid-training' },
                 { text: '弹性 Rollout 扩缩容', link: '/zh/guide/elastic-rollout' },
+
+                { text: 'KEDA 弹性扩缩容', link: '/zh/guide/autoscaler-k8s-keda' },
                 { text: 'Dynamic Context Parallelism', link: '/zh/guide/dynamic-context-parallel' },
                 { text: 'Metrics 服务', link: '/zh/guide/metrics-service-detailed' },
                 { text: '通知系统', link: '/zh/guide/notification-system' },
@@ -504,7 +504,7 @@ export default defineConfig({
   },
 
   themeConfig: {
-    logo: '/rednote-logo.png',
+    logo: '/rai-studio-logo.png',
     socialLinks: [{ icon: 'github', link: 'https://github.com/redai-studio/Relax' }],
     search: {
       provider: 'local',

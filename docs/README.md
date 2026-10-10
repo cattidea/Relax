@@ -99,21 +99,18 @@ Add matching Markdown files at `en/blog/<slug>.md` and `zh/blog/<slug>.md` using
 
 The loader automatically collects each language's posts, with pinned posts first and newest posts first within each group. Individual posts do not need sidebar or navigation edits. Each language has 10 posts per page; additional pages are generated as independent HTML at URLs such as `/en/blog/page/2.html`, so direct links and refreshes work.
 
-The frontmatter below is a template. Replace the angle-bracketed author names and GitHub usernames before publishing.
+The following example uses fictional authors.
 
 ```markdown
 ---
 title: Your article title
 date: '2026-10-02'
 author:
-  name: <author-name>
-  github: <github-username>
+  name: Alice
 co_authors:
-  - name: <co-author-name-1>
-    github: <co-author-github-username-1>
-  - name: <co-author-name-2>
-    github: <co-author-github-username-2>
-  - name: <co-author-name-3>
+  - name: Bob
+  - name: Carol
+  - name: Dave
     avatar: /logo.jpg
 pinned: true
 ---
@@ -131,7 +128,7 @@ For `author`, set `name` to the display name and `github` to the GitHub username
 
 Below 1280px, authors appear below the article title in equal-width columns that adapt to the available space. On wider screens, they form a vertical column to the left of the body. The outline sits on the right, aligned with the first author, and stays visible while scrolling. `pinned: true` keeps a post at the top of the list. Previous and next links remain within the same language and follow publication date, regardless of pinning; they appear below the authors on wide screens and after the article on smaller screens.
 
-To show a rich summary, place `<!-- more -->` after the opening paragraphs. The list renders the Markdown before this marker, including emphasis, links, images, and formulas. Relative article links resolve from the original article even on paginated lists. New summary images follow the [image conventions](#images). Keep Vue components and scripts after the marker because summaries render static HTML. Without the marker, the list uses the first ordinary paragraph, skipping headings, notices, lists, and blockquotes.
+To show a rich summary, place `<!-- more -->` after the opening paragraphs. The list renders the Markdown before this marker, including emphasis, links, images, and formulas. Relative article links resolve from the original article even on paginated lists. New summary images follow the [image conventions](#images). Keep Mermaid diagrams, Vue components, and scripts after the marker because summaries render static HTML. Without the marker, the list uses the first ordinary paragraph, skipping headings, notices, lists, and blockquotes.
 
 The page description is generated from the summary's plain text. An optional frontmatter `description` overrides only the page description, not the list summary. The opening paragraphs remain visible in the full article.
 

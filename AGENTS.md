@@ -118,7 +118,6 @@ pip install -r requirements.txt
 pre-commit run --all-files           # lint + format（等同 make format）
 pytest tests/                        # 测试
 pytest tests/<test_file>.py::<test_name>  # 运行单个测试
-make lint                           # flake8 + mypy，检查 relax/
 make test                           # 等同 pytest tests/
 make docs-dev                       # 启动 VitePress 文档开发服务器
 ```

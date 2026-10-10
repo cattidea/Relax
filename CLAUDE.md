@@ -51,6 +51,10 @@ Entry point: `python relax/entrypoints/train.py [args]` with CLI args defined in
 - Composition over inheritance, max 2 levels deep
 - Test naming: `test_<module>_<behavior>()`; GPU tests use `@pytest.mark.skipif`
 
+## Markdown Writing Format
+
+Follow the [Markdown writing format rules in AGENTS.md](./AGENTS.md#markdown-写作格式) for all Markdown in this repository, including skills, references, templates, and related PR descriptions and comments. Keep each prose paragraph or list item's body on one source line; do not hard-wrap prose to a column limit.
+
 ## Hard Rules
 
 - Run `pre-commit run --all-files` before committing

@@ -1,10 +1,6 @@
 # Relax
 
-项目规则统一维护在 `AGENTS.md`。`CLAUDE.md` 是指向本文件的软链，用于兼容旧版本 Claude Code；[支持直接读取 `AGENTS.md` 的新版本](https://code.claude.com/docs/en/memory)无需该兼容软链。
-
 Relax 是一个基于 Ray Serve 的大模型强化学习训练框架，支持 Megatron 训练后端、SGLang 推理引擎、以及 GRPO/PPO/DAPO 等算法族。
-
-支持多模态与 Agentic 训练、GSPO/SAPO 和 On-Policy Distillation，以及 Qwen3/Qwen3-VL/Qwen3-Omni 等模型。
 
 **Tech stack**: Python 3.8+ · PyTorch · Megatron · SGLang · Ray / Ray Serve
 

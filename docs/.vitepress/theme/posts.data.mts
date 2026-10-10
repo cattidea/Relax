@@ -31,7 +31,7 @@ export default createContentLoader(['en/blog/**/*.md', 'zh/blog/**/*.md'], {
     return pages
       .filter(({ url }) => !/^\/(en|zh)\/blog\/(?:$|page\/)/.test(url))
       .map(({ url, frontmatter, excerpt }) => {
-        const { title, author, description } = frontmatter
+        const { title, author, date, description } = frontmatter
         if (frontmatter.pinned !== undefined && typeof frontmatter.pinned !== 'boolean') {
           throw new Error(`${url}: pinned must be a boolean`)
         }
@@ -40,14 +40,9 @@ export default createContentLoader(['en/blog/**/*.md', 'zh/blog/**/*.md'], {
           throw new Error(`${url}: co_authors must be an array`)
         }
         const authors: Author[] = [author, ...coAuthors]
-        const date =
-          frontmatter.date instanceof Date
-            ? frontmatter.date.toISOString().slice(0, 10)
-            : frontmatter.date
-
         for (const [field, value] of Object.entries({ title, date })) {
           if (typeof value !== 'string' || !value.trim()) {
-            throw new Error(`${url}: blog frontmatter requires a non-empty ${field}`)
+            throw new Error(`${url}: blog frontmatter requires a non-empty ${field} string`)
           }
         }
         if (description !== undefined && (typeof description !== 'string' || !description.trim())) {

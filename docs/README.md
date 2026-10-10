@@ -122,7 +122,7 @@ An introduction with **emphasis** and a [link](./example-debugging-notes.md).
 The rest of the article.
 ```
 
-`title`, `date`, and `author` are required; `co_authors` and `pinned` are optional. Use a valid `YYYY-MM-DD` date. The page renders its heading from `title`, so start the body without repeating an H1 and use H2 (`##`) for sections.
+`title`, `date`, and `author` are required; `co_authors` and `pinned` are optional. Use a valid `YYYY-MM-DD` date in quotes, such as `date: '2026-10-02'`. Quotes keep YAML from converting and normalizing the date before validation; unquoted date values are rejected. The page renders its heading from `title`, so start the body without repeating an H1 and use H2 (`##`) for sections.
 
 For `author`, set `name` to the display name and `github` to the GitHub username without `@`. A plain author name is supported for authors without GitHub. Set `avatar` to an HTTP(S) image URL or a site-root path to override the GitHub avatar; store new avatar images in the image submodule as `/images/blog/<slug>/avatar.webp`. Failed images fall back to the first character of the name. `co_authors` is a list with the same structure as `author`, displayed after the primary author.
 

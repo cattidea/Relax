@@ -76,6 +76,6 @@ git submodule update --init docs/public/images
    npm run docs:preview
    ```
 
-   完整构建包含图片大小检查、Python OpenAPI 生成、VitePress 和 chunk 名称修复，依赖见 `package.json` 与 `.github/workflows/deploy-docs.yml`。缺少运行环境时报告具体阻塞，不把只启动开发服务器当作静态构建验证。
+   完整构建包含 Python OpenAPI 生成、VitePress 和 chunk 名称修复，依赖见 `package.json` 与 `.github/workflows/deploy-docs.yml`。缺少运行环境时报告具体阻塞，不把只启动开发服务器当作静态构建验证。
 3. 在生产预览中检查中英文列表与文章、摘要、作者、图片、上一篇/下一篇和目录。至少检查 320px 窄屏和 1280px 以上宽屏，没有横向溢出；图片路径须包含实际部署 base。直接打开文章地址并刷新，核实静态页面可用；超过 10 篇时检查分页。
 4. 确认发布产物中没有 `images/.git`，并移除临时验证文章和图片。交付时列出文章和图片提交、验证结果、尚未完成的发布步骤；不替用户发布公告或回复 GitHub。

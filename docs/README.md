@@ -99,19 +99,21 @@ Add matching Markdown files at `en/blog/<slug>.md` and `zh/blog/<slug>.md` using
 
 The loader automatically collects each language's posts, with pinned posts first and newest posts first within each group. Individual posts do not need sidebar or navigation edits. Each language has 10 posts per page; additional pages are generated as independent HTML at URLs such as `/en/blog/page/2.html`, so direct links and refreshes work.
 
+The frontmatter below is a template. Replace the angle-bracketed author names and GitHub usernames before publishing.
+
 ```markdown
 ---
 title: Your article title
 date: '2026-10-02'
 author:
-  name: 渡晓
-  github: SigureMo
+  name: <author-name>
+  github: <github-username>
 co_authors:
-  - name: 禹哲
-    github: NINGBENZHE
-  - name: 月天
-    github: Aurelius84
-  - name: Relax Team
+  - name: <co-author-name-1>
+    github: <co-author-github-username-1>
+  - name: <co-author-name-2>
+    github: <co-author-github-username-2>
+  - name: <co-author-name-3>
     avatar: /logo.jpg
 pinned: true
 ---

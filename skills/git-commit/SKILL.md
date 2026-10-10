@@ -1,9 +1,6 @@
 ---
 name: git-commit
-description: >-
-  Creates git commits following Conventional Commits with an optional scope and explanatory bodies for non-trivial commits.
-  Use when user wants to commit changes, create commit, save work, or stage and commit.
-  Verifies intended staged changes and pre-commit checks before creating local commits.
+description: Creates git commits following Conventional Commits with an optional scope and explanatory bodies for non-trivial commits. Use when user wants to commit changes, create commit, save work, or stage and commit. Verifies intended staged changes and pre-commit checks before creating local commits.
 ---
 
 # Git commit
@@ -56,9 +53,7 @@ git commit -F /tmp/commitmsg.txt
 <type>[optional scope]: <description>
 ```
 
-Use a scope when it helps identify the affected area. Both `fix: handle empty batches` and
-`fix(rollout): handle empty batches` are valid. Prefer a concise, imperative subject; about 50 characters
-is a writing guideline, not a hard limit. Use the same format for PR titles, which become squash commit subjects.
+Use a scope when it helps identify the affected area. Both `fix: handle empty batches` and `fix(rollout): handle empty batches` are valid. Prefer a concise, imperative subject; about 50 characters is a writing guideline, not a hard limit. Use the same format for PR titles, which become squash commit subjects.
 
 Project types are `feat`, `fix`, `docs`, `style`, `perf`, `refactor`, `test`, `ci`, `build`, and `chore`.
 
@@ -158,5 +153,4 @@ rm /tmp/commitmsg.txt
 - **NEVER** end subject with a period
 - Prefer a concise subject without shortening it at the expense of clarity
 - **NEVER** use generic messages ("update code", "fix bug", "changes")
-- By default, only create local commits. When the user authorizes pushing or creating a PR, follow
-  [Relax GitHub workflow](../relax-github-workflow/SKILL.md) for publication.
+- By default, only create local commits. When the user authorizes pushing or creating a PR, follow [Relax GitHub workflow](../relax-github-workflow/SKILL.md) for publication.

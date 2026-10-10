@@ -1,10 +1,6 @@
 ---
 name: relax-github-workflow
-description: >-
-  Prepare and publish Relax GitHub contributions, create or update pull requests,
-  and address review feedback. Use when opening a PR, choosing a contribution branch,
-  publishing changes, following up on a review, or organizing dependent Relax PRs.
-  Connects commit, code-review, and CI workflows.
+description: Prepare and publish Relax GitHub contributions, create or update pull requests, and address review feedback. Use when opening a PR, choosing a contribution branch, publishing changes, following up on a review, or organizing dependent Relax PRs. Connects commit, code-review, and CI workflows.
 ---
 
 # Relax GitHub workflow

@@ -7,8 +7,7 @@ description: Upgrade the sglang version used by Relax's training Docker image. U
 
 把 Relax 训练镜像依赖的 sglang 升级到新版本。最大的工作量永远是 **rebase `docker/patch/latest/sglang.patch`**;核心方法是 **以 THUDM/slime 已 rebase 好的同版本 patch 为骨架,只 port Relax 真正私有且未被上游吸收的改动**。
 
-升级时建议维护一份 `docs/draft/sglang-<ver>-upgrade-plan.md` 决策日志(见第 8 节),
-记录本次保留/丢弃的私有改动与验证清单,可作为下次升级的模板。
+升级时建议维护一份 `docs/draft/sglang-<ver>-upgrade-plan.md` 决策日志(见第 8 节),记录本次保留/丢弃的私有改动与验证清单,可作为下次升级的模板。
 
 ## 0. 先搞清楚版本是怎么定的(关键前提)
 
@@ -46,8 +45,7 @@ git diff <slime_old> <slime_new> -- docker/Dockerfile
 git show <slime_new>:docker/patch/<NEW_TAG>/sglang.patch > /tmp/slime_skeleton.patch
 ```
 
-判断 Relax 当前 patch 最接近哪个 slime 版本(差异最小的即 fork 起点),用
-`scripts/classify_patch.sh` 对比(见第 4 节)。
+判断 Relax 当前 patch 最接近哪个 slime 版本(差异最小的即 fork 起点),用 `scripts/classify_patch.sh` 对比(见第 4 节)。
 
 ## 3. 准备目标源码树(让 patch 可验证,别盲改)
 

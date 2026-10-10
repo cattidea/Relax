@@ -1,14 +1,14 @@
 ---
 name: git-commit
 description: >-
-  Creates git commits following Conventional Commits with an optional scope and body.
+  Creates git commits following Conventional Commits with an optional scope and explanatory bodies for non-trivial commits.
   Use when user wants to commit changes, create commit, save work, or stage and commit.
   Verifies intended staged changes and pre-commit checks before creating local commits.
 ---
 
 # Git commit
 
-Creates git commits following Conventional Commits. Read `AGENTS.md` and `CLAUDE.md` for project constraints.
+Creates git commits following Conventional Commits. Read `AGENTS.md` for project constraints.
 
 ## Recent project commits
 
@@ -66,10 +66,9 @@ Project types are `feat`, `fix`, `docs`, `style`, `perf`, `refactor`, `test`, `c
 
 Separate the subject from an optional body or footer with a blank line.
 
-### 3. Optional body
+### 3. Body for non-trivial commits
 
-Add a body when the motivation, design choices, or validation need more context. Plain paragraphs or bullet points
-are sufficient. For a longer message, the headings and emoji below are optional formatting examples.
+Include a body for non-trivial commits to explain the motivation, design choices, or validation. Plain paragraphs or bullet points are sufficient. Prefer Markdown headings when they help organize a longer body; emoji are optional formatting examples.
 
 **Optional type-to-emoji mapping:**
 
@@ -151,9 +150,9 @@ rm /tmp/commitmsg.txt
 
 - **ALWAYS** run `pre-commit run --all-files --show-diff-on-failure` before `git commit`, then `git add` again to stage any auto-fixed changes
 - **ALWAYS** verify staged contents with `git diff --cached --stat` before committing
-- Use an optional scope in parentheses when it adds useful context
+- Prefer a kebab-case scope in parentheses when it adds useful context
 - **ALWAYS** use present tense imperative verb for the subject
-- Add a body when it explains context not evident from the subject and diff
+- Include a body for non-trivial commits; prefer Markdown headings when they improve readability
 - **ALWAYS** prefer `git commit -F <tmpfile>` for commits with markdown body
 - **NEVER** stage unrelated untracked files or unstaged edits while creating a commit
 - **NEVER** end subject with a period

@@ -9,7 +9,7 @@ description: >-
 
 # Relax GitHub workflow
 
-Use this workflow for contributions to `redai-studio/Relax`. Read `AGENTS.md` and `CLAUDE.md` first. For internal GitLab/GitHub synchronization, use [sync-github](../sync-github/SKILL.md). Publishing stays within the user's request; preparing a change does not itself authorize a push, PR, or merge.
+Use this workflow for contributions to `redai-studio/Relax`. Read `AGENTS.md` first. For internal GitLab/GitHub synchronization, use [sync-github](../sync-github/SKILL.md). Publishing stays within the user's request; preparing a change does not itself authorize a push, PR, or merge.
 
 ## Identify the repository and branch
 

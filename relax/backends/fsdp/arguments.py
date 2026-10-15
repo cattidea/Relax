@@ -304,6 +304,14 @@ def validate_generative_config(args: Namespace) -> None:
     if getattr(args, "train_backend", "megatron") != "fsdp":
         return
 
+    from relax.engine.sft.runtime import is_offline_mode
+
+    if is_offline_mode(args):
+        from relax.backends.fsdp.offline_arguments import validate_offline_fsdp_config
+
+        validate_offline_fsdp_config(args)
+        return
+
     errors: List[str] = []
     warnings: List[str] = []
 

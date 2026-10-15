@@ -4,9 +4,9 @@ Development integration of Qwen2-VL retrieval fine-tuning into Relax's existing
 SFT producer, TransferQueue, Actor group, FSDP2, PEFT and distributed checkpoint
 components. There is no rollout engine or vocabulary loss in this recipe.
 
-The CPU contracts and adapter checkpoint/export/reload are tested. The two
-Actor-resolution/validation dispatch changes are still pending repository-owner
-approval; this branch is not yet an end-to-end validated GPU training recipe.
+The CPU contracts and adapter checkpoint/export/reload are tested. Offline FSDP
+dispatch selects this backend and its configuration validator; GPU end-to-end
+validation is in progress.
 
 ## Training contract
 
@@ -78,7 +78,7 @@ latest committed state. The final portable PEFT adapter is written under
 原子性，完整训练为 2,604 步；缺图直接失败，不做过滤。末批使用本 epoch 开头的真实 pair
 补齐，lazy 正例仍重新采样。Relax 的 shuffle 与位置种子不同于原 HF 轨迹，不宣称逐位等价。
 
-目前已验证 CPU 数值契约、DCP 保存恢复以及 adapter 导出重载；Actor 分派与配置校验接入仍等待
-仓库所有者确认，GPU 端到端训练尚未验证。运行前提供上述三个外部目录及已核验的 RAY_ADDRESS，
+目前已验证 CPU 数值契约、DCP 保存恢复以及 adapter 导出重载；Actor 分派与配置校验已接入，
+GPU 端到端训练验证正在进行。运行前提供上述三个外部目录及已核验的 RAY_ADDRESS，
 通过 ray-job.sh 启动，并先协调现有作业。每 200 步和结束时保存可恢复 checkpoint，保留两份；
 同目录、同 EXP_NAME 重启可从最近 COMMITTED 状态恢复。数据、权重、机器路径和运行凭据不进入仓库。

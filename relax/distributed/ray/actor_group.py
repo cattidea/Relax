@@ -21,6 +21,13 @@ def _resolve_train_actor_class(args):
     """
     backend = getattr(args, "train_backend", "megatron")
     if backend == "fsdp":
+        from relax.engine.sft.runtime import is_offline_mode
+
+        if is_offline_mode(args):
+            from relax.backends.fsdp.offline_actor import FSDPOfflineTrainRayActor
+
+            return FSDPOfflineTrainRayActor
+
         from relax.backends.fsdp.actor import FSDPTrainRayActor
 
         return FSDPTrainRayActor

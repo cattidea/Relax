@@ -36,6 +36,20 @@ def test_offline_validator_accepts_complete_pair_recipe():
     validate_offline_fsdp_config(arguments())
 
 
+def test_offline_fsdp_dispatch_selects_retrieval_actor_and_validator():
+    from relax.backends.fsdp.arguments import validate_generative_config
+    from relax.backends.fsdp.offline_actor import FSDPOfflineTrainRayActor
+    from relax.distributed.ray.actor_group import _resolve_train_actor_class
+
+    args = arguments()
+    args.train_backend = "fsdp"
+    assert _resolve_train_actor_class(args) is FSDPOfflineTrainRayActor
+    validate_generative_config(args)
+    args.global_batch_size = 511
+    with pytest.raises(ValueError, match="Global pair count"):
+        validate_generative_config(args)
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

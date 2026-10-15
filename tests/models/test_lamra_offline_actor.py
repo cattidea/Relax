@@ -37,6 +37,17 @@ def test_offline_validator_accepts_complete_pair_recipe():
     validate_offline_fsdp_config(arguments())
 
 
+def test_nli_validator_uses_same_actor_without_requiring_multimodal_candidates():
+    args = arguments()
+    args.custom_dataset_class_path = "relax.models.lamra.dataset.NLIDataset"
+    args.lamra_expected_queries = 275601
+    args.lora_rank = 64
+    args.num_rollout = 1078
+    for name in ("lamra_candidate_path", "lamra_instructions_path", "lamra_media_roots"):
+        delattr(args, name)
+    validate_offline_fsdp_config(args)
+
+
 def test_offline_fsdp_dispatch_selects_retrieval_actor_and_validator():
     from relax.backends.fsdp.arguments import validate_generative_config
     from relax.backends.fsdp.offline_actor import FSDPOfflineTrainRayActor

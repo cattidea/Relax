@@ -77,11 +77,13 @@ def process_pair_in_worker(pair: dict[str, Any], processor_path: str) -> dict[st
     config = MultimodalConfig(image_min_token_num=4, image_max_token_num=300)
     for side in ("query", "positive"):
         item = pair[side]
-        tokens = processor.tokenizer(
-            item["text"], truncation=True, max_length=480, padding=False, add_special_tokens=False
-        )["input_ids"]
-        text = processor.tokenizer.decode(tokens)
-        messages = retrieval_messages(text, item["image"])
+        messages = item.get("messages")
+        if messages is None:
+            tokens = processor.tokenizer(
+                item["text"], truncation=True, max_length=480, padding=False, add_special_tokens=False
+            )["input_ids"]
+            text = processor.tokenizer.decode(tokens)
+            messages = retrieval_messages(text, item["image"])
         rendered = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
         images = None
         if item["image"]:
@@ -90,6 +92,8 @@ def process_pair_in_worker(pair: dict[str, Any], processor_path: str) -> dict[st
                 raise ValueError("Native Qwen2-VL rejects image aspect ratios greater than 200")
             images = [fetch_image({"image": image}, image_patch_size=14, config=config)]
         encoded = processor(text=[rendered], images=images, padding=False, return_tensors="pt")
+        if "messages" in item and encoded["input_ids"].shape[-1] > 1024:
+            raise ValueError("Native NLI sequence exceeds 1024 tokens; refusing to truncate or filter it")
         output[side] = {"input_ids": encoded["input_ids"][0].contiguous()}
         for name in ("pixel_values", "image_grid_thw"):
             if name in encoded:
@@ -199,9 +203,9 @@ class MBEIRDataset:
             raise ValueError("Pair batch size must be positive")
         manager = self.index_manager
         if manager.indices is None:
-            self.shuffle(0)
+            manager.shuffle(0)
         if manager.position == len(self):
-            self.shuffle(manager.current_epoch + 1)
+            manager.shuffle(manager.current_epoch + 1)
         start = manager.position
         take = min(n, len(self) - start)
         indices = manager.indices[start : start + take]
@@ -227,3 +231,56 @@ class MBEIRDataset:
 
     def stop(self) -> None:
         """The SFT component owns and shuts down its shared process pool."""
+
+
+class NLIDataset(MBEIRDataset):
+    """Native sent0/sent1 messages using the same atomic pair transport.
+
+    Prepared JSONL preserves pandas NA-to-string behavior and the original
+    prompt without M-BEIR normalization/truncation. The native NLI dataset
+    ignores hard_neg, so each row still has exactly two sequences.
+    """
+
+    def __init__(
+        self, path: str, *, processor_path: str, processor_pool: Any, batch_size: int, seed: int = 42
+    ) -> None:
+        self.path = path
+        self.reader = StreamingReader(path)
+        self.index_manager = IndexManager(len(self.reader), seed=seed)
+        self.processor_pool = processor_pool
+        self.processor_path = processor_path
+        self.batch_size = batch_size
+        if not len(self) or batch_size <= 0 or processor_pool is None:
+            raise ValueError("NLI requires a nonempty complete dataset, positive batch and SFT processor pool")
+
+    @classmethod
+    def from_args(cls, config: Any, *, tokenizer: Any, processor_pool: Any, pad_token_ids: Any) -> "NLIDataset":
+        del tokenizer, pad_token_ids
+        return cls(
+            config.prompt_data,
+            processor_path=config.lamra_processor_path,
+            processor_pool=processor_pool,
+            batch_size=config.global_batch_size,
+            seed=config.seed,
+        )
+
+    def shuffle(self, epoch_id: int, position: int = 0) -> None:
+        # SFT encodes resume as consumed // real_length, consumed % real_length.
+        # Native even batches consume a padded epoch; undo that encoding here.
+        consumed = epoch_id * len(self) + position
+        padded = ((len(self) + self.batch_size - 1) // self.batch_size) * self.batch_size
+        epoch, offset = divmod(consumed, padded)
+        if offset % self.batch_size or offset >= len(self):
+            raise ValueError("NLI resume must point to a complete global-batch boundary")
+        self.index_manager.shuffle(epoch)
+        self.index_manager.position = offset
+
+    def _pair(self, index: int, access_position: int) -> dict[str, Any]:
+        del access_position
+        messages = self.reader[index]["messages"]
+        if len(messages) != 4 or [m["role"] for m in messages] != ["user", "assistant"] * 2:
+            raise ValueError("Native NLI requires exactly two user/assistant conversations")
+        return {
+            side: {"messages": messages[start : start + 2], "image": None}
+            for side, start in (("query", 0), ("positive", 2))
+        }

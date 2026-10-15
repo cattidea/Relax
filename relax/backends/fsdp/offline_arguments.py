@@ -12,18 +12,20 @@ def validate_offline_fsdp_config(args: Namespace) -> None:
         errors.append("Offline FSDP currently supports LamRA retrieval through loss_type=sft only")
     if getattr(args, "model_adapter_path", None) != "relax.models.lamra.model.load_retrieval_model":
         errors.append("Offline FSDP requires the LamRA retrieval model adapter")
-    if getattr(args, "custom_dataset_class_path", None) != "relax.models.lamra.dataset.MBEIRDataset":
-        errors.append("LamRA requires its atomic-pair M-BEIR dataset")
-    for field in (
+    dataset = getattr(args, "custom_dataset_class_path", None)
+    nli = dataset == "relax.models.lamra.dataset.NLIDataset"
+    if dataset not in ("relax.models.lamra.dataset.MBEIRDataset", "relax.models.lamra.dataset.NLIDataset"):
+        errors.append("LamRA requires its atomic-pair M-BEIR or NLI dataset")
+    fields = [
         "hf_checkpoint",
         "prompt_data",
         "save",
-        "lamra_candidate_path",
-        "lamra_instructions_path",
-        "lamra_media_roots",
         "lamra_processor_path",
         "lamra_audit_path",
-    ):
+    ]
+    if not nli:
+        fields.extend(("lamra_candidate_path", "lamra_instructions_path", "lamra_media_roots"))
+    for field in fields:
         if not getattr(args, field, None):
             errors.append(f"LamRA requires {field}")
     if int(getattr(args, "lamra_expected_queries", 0)) <= 0:

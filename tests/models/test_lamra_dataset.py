@@ -101,3 +101,60 @@ def test_existing_tensordict_transport_preserves_complete_pairs(dataset):
         assert set(pair) == {"query", "positive"}
         for side in pair:
             assert torch.equal(pair[side]["input_ids"], sample.multimodal_train_inputs[side]["input_ids"])
+
+
+def test_nli_complete_epochs_and_resume_include_tail_padding_without_skips(tmp_path, monkeypatch):
+    path = tmp_path / "nli.jsonl"
+    path.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "messages": [
+                        {"role": role, "content": f"raw {index}" if role == "user" else "<emb>."}
+                        for role in ("user", "assistant", "user", "assistant")
+                    ]
+                }
+            )
+            + "\n"
+            for index in range(10)
+        )
+    )
+
+    def encode(pair, processor_path):
+        assert "raw " in pair["query"]["messages"][0]["content"]
+        assert all(pair[side]["image"] is None for side in pair)
+        return {side: {"input_ids": torch.tensor([1, 99])} for side in pair}
+
+    monkeypatch.setattr(module, "process_pair_in_worker", encode)
+    with ThreadPoolExecutor(2) as executor:
+        data = module.NLIDataset(
+            str(path), processor_path="unused", processor_pool=type("Pool", (), {"executor": executor})(), batch_size=8
+        )
+        data.shuffle(0)
+        epoch0 = list(data.index_manager.indices)
+        batches = [asyncio.run(data.get_batch_async(8))[0] for _ in range(4)]
+        epoch1 = list(data.index_manager.indices)
+        assert [p.source_idx for p in batches[0]] == epoch0[:8]
+        assert [p.source_idx for p in batches[1]] == epoch0[8:] + epoch0[:6]
+        assert [p.source_idx for p in batches[2]] == epoch1[:8]
+        assert [p.source_idx for p in batches[3]] == epoch1[8:] + epoch1[:6]
+        # Producer encodes resumed step 2 as consumed=16 -> epoch=1,pos=6.
+        data.shuffle(1, position=6)
+        resumed = asyncio.run(data.get_batch_async(8))[0]
+        assert [p.source_idx for p in resumed] == epoch1[:8]
+        data.shuffle(2, position=4)  # step3=24 -> epoch=2,pos=4
+        resumed_tail = asyncio.run(data.get_batch_async(8))[0]
+        assert [p.source_idx for p in resumed_tail] == epoch1[8:] + epoch1[:6]
+
+
+def test_nli_recipe_keeps_local_coordinator_for_padded_epoch_resume():
+    from types import SimpleNamespace
+
+    from relax.components.sft import SFT
+
+    # Custom datasets must not enter the remote producer helper, which directly
+    # rewrites IndexManager using unpadded offsets instead of dataset.shuffle.
+    cls = getattr(SFT, "func_or_class", SFT)
+    service = object.__new__(cls)
+    service.config = SimpleNamespace(custom_dataset_class_path="relax.models.lamra.dataset.NLIDataset")
+    assert not service._should_use_remote_batch_producer()

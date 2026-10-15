@@ -188,22 +188,46 @@ class FSDPOfflineTrainRayActor(TrainRayActor):
             raise ValueError("LamRA requires a local safetensors pretrained checkpoint")
         inputs = {
             "query": self.args.prompt_data,
-            "candidates": self.args.lamra_candidate_path,
-            "instructions": self.args.lamra_instructions_path,
         }
+        nli = self.args.custom_dataset_class_path == "relax.models.lamra.dataset.NLIDataset"
+        if not nli:
+            inputs.update(candidates=self.args.lamra_candidate_path, instructions=self.args.lamra_instructions_path)
         input_hashes = {key: sha256_file(Path(value)) for key, value in inputs.items()}
         audit = json.loads(Path(self.args.lamra_audit_path).read_text())
         if audit.get("status") != "passed" or audit.get("input_sha256") != input_hashes:
-            raise ValueError("A current, successful full M-BEIR media/positive audit is required")
+            raise ValueError("A current, successful full LamRA input audit is required")
         if audit["query_count"] != self.args.lamra_expected_queries:
-            raise ValueError("M-BEIR query count differs from the requested full dataset")
+            raise ValueError("LamRA query count differs from the requested full dataset")
+        if nli and (
+            audit.get("dataset") != "nli"
+            or audit.get("hard_negative_policy") != "ignored_native_pair_only"
+            or audit.get("validated_sequences") != 2 * audit["query_count"]
+            or not 0 < audit.get("max_sequence_tokens", 0) <= 1024
+            or audit.get("data_filtered_or_truncated") is not False
+        ):
+            raise ValueError("NLI audit must validate every native pair without filtering/truncation")
         return {
             "family": "lamra",
             "save_mode": "adapter",
+            **({"dataset": "nli"} if nli else {}),
+            **(
+                {
+                    "preprocessing_sha256": {
+                        path.name: sha256_file(path)
+                        for path in sorted(Path(self.args.lamra_processor_path).iterdir())
+                        if path.is_file() and path.suffix in (".json", ".txt", ".jinja")
+                    },
+                    "position_mode": "legacy_sequential",
+                    "sequence_subbatch": getattr(self.args, "lamra_forward_subbatch_size", 32),
+                    "emb_token_id": self.emb_token_id,
+                }
+                if nli
+                else {}
+            ),
             "base_model_sha256": {path.name: sha256_file(path) for path in weights},
             "input_sha256": input_hashes,
             "query_count": audit["query_count"],
-            "candidate_count": audit["candidate_count"],
+            "candidate_count": audit.get("candidate_count", audit["query_count"]),
             "seed": self.args.seed,
             "global_batch_size": self.args.global_batch_size,
             "num_rollout": self.args.num_rollout,

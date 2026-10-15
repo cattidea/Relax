@@ -29,6 +29,7 @@ def arguments():
         use_dynamic_batch_size=True,
         num_rollout=2604,
         save_interval=200,
+        distributed_timeout_minutes=30,
     )
 
 
@@ -90,7 +91,6 @@ def test_rank_fetch_uses_pair_atomic_partition_and_explicit_cache_key():
 
     actor = object.__new__(FSDPOfflineTrainRayActor)
     actor.args = arguments()
-    actor.args.rollout_request_timeout = 1
     actor._rank, actor._world_size, actor.client = 3, 8, Client()
     assert actor._read_pairs(7) == [pair] * 64
 

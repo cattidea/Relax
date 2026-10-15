@@ -84,7 +84,7 @@ PERF_ARGS=(
     --actor-num-nodes 1 --actor-num-gpus-per-node 8 --num-gpus-per-node 8
     --tensor-model-parallel-size 1 --pipeline-model-parallel-size 1 --context-parallel-size 1
     --expert-model-parallel-size 1 --expert-tensor-parallel-size 1
-    --use-gloo-process-groups --seed 42 --bf16 --use-health-check
+    --use-gloo-process-groups --seed 42 --bf16 --use-health-check --max-global-restart 0
 )
 TRACKING_ARGS=(
     --use-clearml --use-metrics-service --tb-project-name "${PROJECT_NAME}"

@@ -224,7 +224,7 @@ class FSDPOfflineTrainRayActor(TrainRayActor):
         partition = sft_partition_id(self.args, rollout_id)
         task = sft_task_name(self.args, component="backend")
         local_pairs = self.args.global_batch_size // self._world_size
-        deadline = time.monotonic() + self.args.rollout_request_timeout
+        deadline = time.monotonic() + self.args.distributed_timeout_minutes * 60
         while time.monotonic() < deadline:
             meta = self.client.get_meta(
                 data_fields=["multimodal_train_inputs", "total_lengths"],

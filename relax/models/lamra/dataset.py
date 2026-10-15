@@ -40,6 +40,18 @@ _retrieval_processor: Any = None
 _retrieval_processor_path: str | None = None
 
 
+def resolve_media_path(relative: str | None, roots: list[Path]) -> str | None:
+    if not relative:
+        return None
+    if Path(relative).is_absolute() or ".." in Path(relative).parts:
+        raise ValueError("M-BEIR media references must be relative to an explicit media root")
+    for root in roots:
+        path = root / relative
+        if path.is_file():
+            return str(path)
+    raise FileNotFoundError(f"M-BEIR image unavailable in configured media roots: {relative}")
+
+
 def process_pair_in_worker(pair: dict[str, Any], processor_path: str) -> dict[str, dict[str, torch.Tensor]]:
     """Use the SFT process pool, with an explicit slow processor contract.
 
@@ -158,15 +170,7 @@ class MBEIRDataset:
         self.index_manager.position = position
 
     def _image_path(self, relative: str | None) -> str | None:
-        if not relative:
-            return None
-        if Path(relative).is_absolute() or ".." in Path(relative).parts:
-            raise ValueError("M-BEIR media references must be relative to an explicit media root")
-        for root in self.media_roots:
-            path = root / relative
-            if path.is_file():
-                return str(path)
-        raise FileNotFoundError(f"M-BEIR image unavailable in configured media roots: {relative}")
+        return resolve_media_path(relative, self.media_roots)
 
     def _pair(self, index: int, access_position: int) -> dict[str, Any]:
         row = self.reader[index]

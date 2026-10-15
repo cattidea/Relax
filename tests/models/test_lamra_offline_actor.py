@@ -19,6 +19,8 @@ def arguments():
         lamra_instructions_path="instructions.tsv",
         lamra_media_roots=["media"],
         lamra_processor_path="processor",
+        lamra_audit_path="audit.json",
+        lamra_expected_queries=1332790,
         actor_num_nodes=1,
         actor_num_gpus_per_node=8,
         global_batch_size=512,

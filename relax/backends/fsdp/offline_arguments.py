@@ -22,9 +22,12 @@ def validate_offline_fsdp_config(args: Namespace) -> None:
         "lamra_instructions_path",
         "lamra_media_roots",
         "lamra_processor_path",
+        "lamra_audit_path",
     ):
         if not getattr(args, field, None):
             errors.append(f"LamRA requires {field}")
+    if int(getattr(args, "lamra_expected_queries", 0)) <= 0:
+        errors.append("LamRA requires an explicit positive expected full query count")
     for field in ("tensor_model_parallel_size", "pipeline_model_parallel_size", "context_parallel_size"):
         if getattr(args, field, 1) != 1:
             errors.append(f"LamRA offline FSDP requires {field}=1")

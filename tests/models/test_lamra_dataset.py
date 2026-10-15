@@ -87,3 +87,17 @@ def test_native_text_normalization_and_message_contract():
     message = module.retrieval_messages("", "image.jpg")
     assert message[0]["content"][1]["text"] == "\nSummarize above image in one word: "
     assert message[1]["content"][0]["text"] == "<emb>."
+
+
+def test_existing_tensordict_transport_preserves_complete_pairs(dataset):
+    from relax.engine.sft.dataset.streaming import pack_samples_for_tq
+    from relax.utils.utils import dict_to_tensordict
+
+    samples, _ = asyncio.run(dataset.get_batch_async(8))
+    payload = pack_samples_for_tq(samples, force_multimodal_field=True)
+    transported = dict_to_tensordict(payload, batch_size=len(samples))
+    for row, sample in zip(transported["multimodal_train_inputs"], samples, strict=True):
+        pair = getattr(row, "data", row)
+        assert set(pair) == {"query", "positive"}
+        for side in pair:
+            assert torch.equal(pair[side]["input_ids"], sample.multimodal_train_inputs[side]["input_ids"])

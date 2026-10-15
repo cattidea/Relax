@@ -159,11 +159,19 @@ class FSDPOfflineTrainRayActor(TrainRayActor):
             "candidates": self.args.lamra_candidate_path,
             "instructions": self.args.lamra_instructions_path,
         }
+        input_hashes = {key: sha256_file(Path(value)) for key, value in inputs.items()}
+        audit = json.loads(Path(self.args.lamra_audit_path).read_text())
+        if audit.get("status") != "passed" or audit.get("input_sha256") != input_hashes:
+            raise ValueError("A current, successful full M-BEIR media/positive audit is required")
+        if audit["query_count"] != self.args.lamra_expected_queries:
+            raise ValueError("M-BEIR query count differs from the requested full dataset")
         return {
             "family": "lamra",
             "save_mode": "adapter",
             "base_model_sha256": {path.name: sha256_file(path) for path in weights},
-            "input_sha256": {key: sha256_file(Path(value)) for key, value in inputs.items()},
+            "input_sha256": input_hashes,
+            "query_count": audit["query_count"],
+            "candidate_count": audit["candidate_count"],
             "seed": self.args.seed,
             "global_batch_size": self.args.global_batch_size,
             "num_rollout": self.args.num_rollout,

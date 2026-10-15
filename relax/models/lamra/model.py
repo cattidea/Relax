@@ -14,11 +14,25 @@ LANGUAGE_TARGETS = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_pro
 
 
 def load_retrieval_model(args: Any) -> tuple[LegacyQwen2VLEncoder, dict[str, Any]]:
-    from transformers import Qwen2VLModel
+    from transformers import Qwen2VLForConditionalGeneration
 
-    backbone = Qwen2VLModel.from_pretrained(
-        args.hf_checkpoint, dtype=torch.bfloat16, attn_implementation="sdpa", device_map="cpu"
+    # The full HF class owns the official legacy-checkpoint key conversions.
+    # Loading its bare submodel bypasses those mappings in recent Transformers
+    # and can silently leave the complete language stack randomly initialized.
+    conditional, loading = Qwen2VLForConditionalGeneration.from_pretrained(
+        args.hf_checkpoint,
+        dtype=torch.bfloat16,
+        attn_implementation="sdpa",
+        device_map="cpu",
+        output_loading_info=True,
     )
+    # Retrieval never registers or calls lm_head. Some native merged PT files
+    # intentionally omit it. Every parameter actually used by the encoder must
+    # load; no language/vision projection may fall back to initialization.
+    missing_encoder = set(loading.get("missing_keys", ())) - {"lm_head.weight"}
+    if missing_encoder or any(loading.get(name) for name in ("unexpected_keys", "mismatched_keys", "error_msgs")):
+        raise ValueError(f"LamRA pretrained checkpoint did not load completely: {loading}")
+    backbone = conditional.model
     model = LegacyQwen2VLEncoder(
         backbone,
         image_token_id=backbone.config.image_token_id,
@@ -43,6 +57,9 @@ def load_retrieval_model(args: Any) -> tuple[LegacyQwen2VLEncoder, dict[str, Any
     )
     if injected != expected_layers:
         raise ValueError("PEFT did not inject every requested language projection")
+    from relax.backends.fsdp.runtime import upcast_trainable_params
+
+    upcast_trainable_params(model, torch.float32)
     initial = getattr(args, "lamra_initial_adapter", None)
     if initial:
         from safetensors.torch import load_file
@@ -71,5 +88,7 @@ def load_retrieval_model(args: Any) -> tuple[LegacyQwen2VLEncoder, dict[str, Any
         "trainable_tensors": len(trainable),
         "trainable_parameters": sum(parameter.numel() for _, parameter in trainable),
         "initial_adapter_exact": bool(initial),
+        "pretrained_encoder_complete": True,
+        "discarded_missing_lm_head": "lm_head.weight" in loading.get("missing_keys", ()),
         "target_modules": targets,
     }

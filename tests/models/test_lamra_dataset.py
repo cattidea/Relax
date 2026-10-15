@@ -157,13 +157,12 @@ def test_nli_recipe_keeps_local_coordinator_for_padded_epoch_resume(monkeypatch)
     monkeypatch.setattr(sft, "sft_tq_num_shards", lambda config: 2)
     monkeypatch.setattr(sft.ray, "is_initialized", lambda: True)
     cls = getattr(sft.SFT, "func_or_class", sft.SFT)
-    service = object.__new__(cls)
-    service._logger = SimpleNamespace(info=lambda message: None)
+    service = SimpleNamespace(_logger=SimpleNamespace(info=lambda message: None))
     service.config = SimpleNamespace(
         custom_dataset_class_path="relax.models.lamra.dataset.NLIDataset",
         global_batch_size=512,
         sft_async_prepack=True,
     )
-    assert not service._should_use_remote_batch_producer()
+    assert not cls._should_use_remote_batch_producer(service)
     service.config.custom_dataset_class_path = None
-    assert service._should_use_remote_batch_producer()
+    assert cls._should_use_remote_batch_producer(service)

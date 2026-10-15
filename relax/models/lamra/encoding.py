@@ -99,10 +99,16 @@ class LegacyQwen2VLEncoder(torch.nn.Module):
         super().__init__()
         if subbatch_size <= 0:
             raise ValueError("Forward subbatch size must be positive")
-        self.backbone = backbone
+        # Use HF's canonical state-dict stem so the existing DCP -> PEFT
+        # exporter produces reloadable Qwen2-VL adapter keys unchanged.
+        self.model = backbone
         self.image_token_id = image_token_id
         self.subbatch_size = subbatch_size
         self._no_split_modules = sorted({type(layer).__name__ for layer in backbone.language_model.layers})
+
+    @property
+    def backbone(self) -> torch.nn.Module:
+        return self.model
 
     def forward(self, batch: RetrievalBatch) -> torch.Tensor:
         ids = batch.input_ids

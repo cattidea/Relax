@@ -147,14 +147,23 @@ def test_nli_complete_epochs_and_resume_include_tail_padding_without_skips(tmp_p
         assert [p.source_idx for p in resumed_tail] == epoch1[8:] + epoch1[:6]
 
 
-def test_nli_recipe_keeps_local_coordinator_for_padded_epoch_resume():
+def test_nli_recipe_keeps_local_coordinator_for_padded_epoch_resume(monkeypatch):
     from types import SimpleNamespace
 
-    from relax.components.sft import SFT
+    from relax.components import sft
 
     # Custom datasets must not enter the remote producer helper, which directly
     # rewrites IndexManager using unpadded offsets instead of dataset.shuffle.
-    cls = getattr(SFT, "func_or_class", SFT)
+    monkeypatch.setattr(sft, "sft_tq_num_shards", lambda config: 2)
+    monkeypatch.setattr(sft.ray, "is_initialized", lambda: True)
+    cls = getattr(sft.SFT, "func_or_class", sft.SFT)
     service = object.__new__(cls)
-    service.config = SimpleNamespace(custom_dataset_class_path="relax.models.lamra.dataset.NLIDataset")
+    service._logger = SimpleNamespace(info=lambda message: None)
+    service.config = SimpleNamespace(
+        custom_dataset_class_path="relax.models.lamra.dataset.NLIDataset",
+        global_batch_size=512,
+        sft_async_prepack=True,
+    )
     assert not service._should_use_remote_batch_producer()
+    service.config.custom_dataset_class_path = None
+    assert service._should_use_remote_batch_producer()

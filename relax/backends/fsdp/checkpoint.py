@@ -514,7 +514,9 @@ def _load_dcp_model_state(fsdp_dir: str) -> Dict[str, torch.Tensor]:
             continue
         destination[key[len(prefix) :]] = torch.empty(entry.size, dtype=entry.properties.dtype)
     if destination:
-        dcp.load({"model": destination}, checkpoint_id=fsdp_dir)
+        # Export runs on rank 0 while peers wait for its result. This complete
+        # CPU destination must read every shard without entering WORLD collectives.
+        dcp.load({"model": destination}, checkpoint_id=fsdp_dir, no_dist=True)
     return destination
 
 

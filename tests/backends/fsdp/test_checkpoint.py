@@ -419,6 +419,68 @@ def test_export_peft_adapter_writes_a_loadable_directory(_dist, tmp_path):
     ]
 
 
+def _rank0_export_worker(rank: int, save_dir: str, queue) -> None:
+    from safetensors.torch import load_file
+
+    from relax.utils import distributed_utils
+
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{os.path.join(save_dir, 'export-rendezvous')}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=15),
+    )
+    control = dist.new_group(backend="gloo", timeout=timedelta(seconds=15))
+    distributed_utils.GLOO_GROUP = control
+    try:
+        model, opt = _lora_model()
+        ckpt.save_checkpoint(
+            save_dir,
+            "t2i",
+            1,
+            model,
+            opt,
+            trainer_state={"next_rollout_id": 2},
+            weight_sync_manifest={},
+            adapter_contract=_LORA_CONTRACT,
+            adapter_only=True,
+            is_rank0=rank == 0,
+        )
+        result = [None]
+        if rank == 0:
+            out = ckpt.export_peft_adapter(save_dir, "t2i", 1, os.path.join(save_dir, "adapter"))
+            values = load_file(os.path.join(out, "adapter_model.safetensors"))
+            for name in ("A", "B"):
+                expected = getattr(model.to_q, f"lora_{name}")["default"].weight.detach()
+                assert torch.equal(values[f"base_model.model.to_q.lora_{name}.weight"], expected)
+            result[0] = "exported"
+        # The non-exporting rank waits on the same control operation as the actor.
+        dist.broadcast_object_list(result, src=0, group=control)
+        queue.put((rank, result[0]))
+    finally:
+        dist.destroy_process_group()
+
+
+def test_rank0_exports_while_peer_waits_without_world_collectives(tmp_path):
+    ctx = mp.get_context("spawn")
+    queue = ctx.Queue()
+    processes = [ctx.Process(target=_rank0_export_worker, args=(rank, str(tmp_path), queue)) for rank in range(2)]
+    try:
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=30)
+            assert not process.is_alive(), "rank-0 export entered a collective that its peer never joins"
+            assert process.exitcode == 0
+        assert sorted(queue.get(timeout=2) for _ in range(2)) == [(0, "exported"), (1, "exported")]
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+
+
 def test_export_peft_adapter_refuses_a_full_ft_checkpoint(_dist, tmp_path):
     save_dir = str(tmp_path / "ckpt")
     model, opt = _trained_model()

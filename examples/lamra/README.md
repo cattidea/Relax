@@ -51,7 +51,9 @@ DATA_DIR/
 SAVE_DIR/                     persistent run/checkpoint root
 ```
 
-The script audits all query/positive media references before submitting. Set
+The script audits all query/positive media references before submitting. An
+existing full audit may be supplied with `LAMRA_DATA_AUDIT`; the actor verifies
+its counts and current metadata hashes. Set
 `RAY_ADDRESS` to the verified Ray Jobs HTTP address and export the three roots,
 then run on an available cluster:
 

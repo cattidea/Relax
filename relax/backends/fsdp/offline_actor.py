@@ -116,6 +116,7 @@ class FSDPOfflineTrainRayActor(TrainRayActor):
                 next_step = state["next_rollout_id"]
                 if next_step != latest + 1:
                     raise ValueError("Checkpoint iteration and next dataset step disagree")
+                self._verify_restored_optimizer(next_step)
         self.next_step = next_step
         self._get_parallel_config()
         tq.init(args.tq_config)
@@ -145,8 +146,39 @@ class FSDPOfflineTrainRayActor(TrainRayActor):
             )
             + "\n"
         )
+        if next_step == args.num_rollout:
+            # A committed final checkpoint may survive an interrupted export.
+            self._rank0(lambda: self._export_final_adapter(next_step - 1))
         logger.info(f"LamRA rank {self._rank} ready at step {next_step}/{args.num_rollout}")
         return next_step
+
+    def _verify_restored_optimizer(self, next_step: int) -> None:
+        # Checkpoint initialization is outside the forward/backward hot path.
+        states = list(self.optimizer.state.values())
+        steps = {int(state["step"]) for state in states}
+        moments = {}
+        for key in ("exp_avg", "exp_avg_sq"):
+            moments[key] = sum(
+                bool(torch.count_nonzero(value.to_local() if hasattr(value, "to_local") else value))
+                for state in states
+                if (value := state.get(key)) is not None
+            )
+        if len(states) != len(self.parameters) or steps != {next_step} or not all(moments.values()):
+            raise ValueError("Restored LamRA optimizer steps or moment tensors are incomplete")
+        path = Path(self.args.save) / "lamra" / f"resume_optimizer_rank{self._rank}.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "status": "passed",
+                    "next_step": next_step,
+                    "states": len(states),
+                    "optimizer_steps": sorted(steps),
+                    "nonzero_moments": moments,
+                },
+                indent=2,
+            )
+            + "\n"
+        )
 
     def _input_contract(self) -> dict[str, Any]:
         from relax.utils.replay.bundle import sha256_file
@@ -299,11 +331,37 @@ class FSDPOfflineTrainRayActor(TrainRayActor):
             )
         )
         if self.next_step == self.args.num_rollout:
-            self._rank0(
-                lambda: ckpt.export_peft_adapter(
-                    self.args.save, "lamra", rollout_id, os.path.join(self.args.save, "adapter")
-                )
+            self._rank0(lambda: self._export_final_adapter(rollout_id))
+
+    def _export_final_adapter(self, rollout_id: int) -> None:
+        from safetensors.torch import load_file
+
+        from relax.backends.fsdp import checkpoint as ckpt
+
+        output = Path(self.args.save) / "adapter"
+        ckpt.export_peft_adapter(self.args.save, "lamra", rollout_id, str(output))
+        values = load_file(str(output / "adapter_model.safetensors"))
+        nonzero_b = sum(bool(torch.count_nonzero(value)) for name, value in values.items() if ".lora_B." in name)
+        if len(values) != self.model_metadata["trainable_tensors"] or any(
+            not torch.isfinite(value).all() for value in values.values()
+        ):
+            raise ValueError("Final LamRA adapter has incomplete or nonfinite tensors")
+        if nonzero_b != self.model_metadata["language_lora_layers"]:
+            raise ValueError("Final LamRA adapter contains unchanged LoRA B tensors")
+        (Path(self.args.save) / "training_verification.json").write_text(
+            json.dumps(
+                {
+                    "status": "passed",
+                    "completed_steps": self.next_step,
+                    "query_count": self.contract["query_count"],
+                    "adapter_tensors": len(values),
+                    "nonzero_lora_b": nonzero_b,
+                    "trainable_parameters": sum(value.numel() for value in values.values()),
+                },
+                indent=2,
             )
+            + "\n"
+        )
 
     def _get_parallel_config(self) -> dict[str, Any]:
         self.train_parallel_config = {"train_backend": "fsdp", "dp_size": self._world_size, "tp_size": 1, "pp_size": 1}

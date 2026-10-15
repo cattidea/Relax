@@ -93,3 +93,42 @@ def test_rank_fetch_uses_pair_atomic_partition_and_explicit_cache_key():
     actor.args.rollout_request_timeout = 1
     actor._rank, actor._world_size, actor.client = 3, 8, Client()
     assert actor._read_pairs(7) == [pair] * 64
+
+
+def test_final_export_can_recover_after_interrupted_artifact_write(tmp_path, monkeypatch):
+    import json
+
+    import torch
+    from safetensors.torch import save_file
+
+    from relax.backends.fsdp import checkpoint as ckpt
+    from relax.backends.fsdp.offline_actor import FSDPOfflineTrainRayActor
+
+    exports = []
+
+    def export(save, task, iteration, output):
+        from pathlib import Path
+
+        exports.append((save, task, iteration))
+        path = Path(output)
+        path.mkdir(exist_ok=True)
+        save_file(
+            {"layer.lora_A.weight": torch.ones(2, 2), "layer.lora_B.weight": torch.ones(2, 2)},
+            str(path / "adapter_model.safetensors"),
+        )
+
+    monkeypatch.setattr(ckpt, "export_peft_adapter", export)
+    actor = object.__new__(FSDPOfflineTrainRayActor)
+    actor.args = arguments()
+    actor.args.save = str(tmp_path)
+    actor.next_step = 2604
+    actor.contract = {"query_count": 1332790}
+    actor.model_metadata = {"trainable_tensors": 2, "language_lora_layers": 1}
+    (tmp_path / "adapter").mkdir()
+    (tmp_path / "adapter" / "adapter_model.safetensors").write_bytes(b"partial")
+    actor._export_final_adapter(2603)
+    assert exports == [(str(tmp_path), "lamra", 2603)]
+    result = json.loads((tmp_path / "training_verification.json").read_text())
+    assert result["status"] == "passed"
+    assert result["completed_steps"] == 2604
+    assert result["nonzero_lora_b"] == 1

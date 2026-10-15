@@ -17,12 +17,17 @@ NUM_ROLLOUT="${NUM_ROLLOUT:-2604}"
 now="$(date +%Y%m%d-%H%M%S)"
 mkdir -p "${SAVE_DIR}/${EXP_NAME}/logs"
 
-python3 "${RELAX_ROOT}/examples/lamra/audit_data.py" \
+if [[ -n "${LAMRA_DATA_AUDIT:-}" ]]; then
+    # The actor verifies this report's full counts and current metadata hashes.
+    cp "${LAMRA_DATA_AUDIT}" "${SAVE_DIR}/${EXP_NAME}/data_audit.json"
+else
+    python3 "${RELAX_ROOT}/examples/lamra/audit_data.py" \
     --query "${DATA_DIR}/metadata/query/union_train/mbeir_union_up_train.jsonl" \
     --candidates "${DATA_DIR}/metadata/cand_pool/global/mbeir_union_train_cand_pool.jsonl" \
     --instructions "${DATA_DIR}/metadata/instructions/query_instructions.tsv" \
     --media-root "${DATA_DIR}/media/recovered" --media-root "${DATA_DIR}/media/original" \
     --output "${SAVE_DIR}/${EXP_NAME}/data_audit.json"
+fi
 
 # JSON is a YAML subset. Runtime paths stay in SAVE_DIR, never in the repository.
 python3 - "${MODEL_DIR}" "${DATA_DIR}" "${SAVE_DIR}/${EXP_NAME}" <<'PY'
@@ -49,9 +54,12 @@ PY
 
 MODEL_ARGS=(
     --train-backend fsdp --hf-checkpoint "${MODEL_DIR}/pt"
+    --skip-hf-validate
     --model-adapter-path relax.models.lamra.model.load_retrieval_model
     --fsdp-trainable-mode lora --fsdp-master-dtype fp32 --fsdp-param-dtype bf16 --fsdp-reduce-dtype fp32
     --lora-rank 128 --lora-alpha 256 --lora-dropout 0.05
+    --lora-target-modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj
+    --fsdp-activation-checkpointing
 )
 CKPT_ARGS=(
     --save "${SAVE_DIR}/${EXP_NAME}" --load "${SAVE_DIR}/${EXP_NAME}"

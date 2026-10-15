@@ -68,7 +68,7 @@ other job before invoking it. No global dependencies or drivers are changed by
 this recipe.
 
 `EXP_NAME` is stable across restarts; ClearML run names additionally include a
-timestamp. Every 200 steps and at completion the existing DCP component saves
+timestamp. After the first update, every 200 steps and at completion the existing DCP component saves
 model adapter, optimizer and rank RNG with a `COMMITTED` marker. Two committed
 checkpoints are retained. Restart with the same roots and `EXP_NAME` to load the
 latest committed state. The final portable PEFT adapter is written under

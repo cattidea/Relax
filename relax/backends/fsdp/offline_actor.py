@@ -292,7 +292,7 @@ class FSDPOfflineTrainRayActor(TrainRayActor):
             event.record()
             self._pending_metrics.append((self.next_step, host, event))
         final = self.next_step == self.args.num_rollout
-        if final or self.next_step % self.args.save_interval == 0:
+        if final or self.next_step == 1 or self.next_step % self.args.save_interval == 0:
             self.save_model(rollout_id)
         self._drain_metrics()
 

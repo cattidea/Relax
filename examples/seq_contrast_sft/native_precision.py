@@ -30,6 +30,8 @@ PROFILE = {
     "optimizer": "unchanged",
 }
 _OWNER: tuple[int, ...] | None = None
+_OWNER_OPTIMIZER_PROFILE: dict[str, Any] | None = None
+OPTIMIZER_PROFILE_FILE = "experimental_optimizer_precision.json"
 
 
 def _require(condition: bool, message: str) -> None:
@@ -153,7 +155,7 @@ def _install_objective() -> None:
     retrieval.retrieval_infonce = native_objective
 
 
-def _record_profile(args: Any, process_group: Any) -> None:
+def _record_profile(args: Any, process_group: Any, optimizer_profile: dict[str, Any] | None = None) -> None:
     """Keep an explicit profile alongside DCP; never silently change a stamped
     run."""
     if not args.save:
@@ -162,13 +164,26 @@ def _record_profile(args: Any, process_group: Any) -> None:
     for root in {args.load, args.save} - {None, ""}:
         path = Path(root) / name
         if path.exists():
-            _require(json.loads(path.read_text())["profile"] == PROFILE, "checkpoint precision profile differs")
+            record = json.loads(path.read_text())
+            _require(record["profile"] == PROFILE, "checkpoint precision profile differs")
+            declared_optimizer = record.get("effective_optimizer_profile")
+            if declared_optimizer is not None:
+                _require(declared_optimizer == optimizer_profile, "checkpoint optimizer profile differs")
+                if (Path(root) / "latest_checkpointed_iteration.txt").is_file():
+                    _require((Path(root) / OPTIMIZER_PROFILE_FILE).is_file(), "checkpoint optimizer profile missing")
+        optimizer_path = Path(root) / OPTIMIZER_PROFILE_FILE
+        if optimizer_path.exists():
+            _require(
+                json.loads(optimizer_path.read_text())["effective_optimizer_profile"] == optimizer_profile,
+                "checkpoint optimizer profile differs",
+            )
     if dist.get_rank(process_group) == 0:
         root = Path(args.save)
         root.mkdir(parents=True, exist_ok=True)
         target = root / name
         payload = {
             "profile": PROFILE,
+            "effective_optimizer_profile": optimizer_profile,
             "adopted_unstamped_load": bool(
                 args.load
                 and (Path(args.load) / "latest_checkpointed_iteration.txt").is_file()
@@ -180,10 +195,19 @@ def _record_profile(args: Any, process_group: Any) -> None:
         temporary.replace(target)
 
 
-def before_train(args: Any, rollout_id: int, step_id: int, models: list[Any], optimizer: Any, scheduler: Any) -> None:
+def before_train(
+    args: Any,
+    rollout_id: int,
+    step_id: int,
+    models: list[Any],
+    optimizer: Any,
+    scheduler: Any,
+    *,
+    optimizer_profile: dict[str, Any] | None = None,
+) -> None:
     """Install once after DCP load; leave optimizer, scheduler and state schema
     intact."""
-    global _OWNER
+    global _OWNER, _OWNER_OPTIMIZER_PROFILE
     from megatron.core import mpu
     from megatron.core.distributed import DistributedDataParallel
     from megatron.core.extensions.transformer_engine import TEDotProductAttention
@@ -194,6 +218,7 @@ def before_train(args: Any, rollout_id: int, step_id: int, models: list[Any], op
 
     owner = tuple(id(model) for model in models)
     if _OWNER == owner:
+        _require(_OWNER_OPTIMIZER_PROFILE == optimizer_profile, "owned optimizer profile changed")
         return
     _require(_OWNER is None, "only one owned model group per process")
     _require(args.loss_type == "sft" and args.task_type == "seq_contrast", "sequence contrastive SFT required")
@@ -230,7 +255,7 @@ def before_train(args: Any, rollout_id: int, step_id: int, models: list[Any], op
         "attention dropout/window unsupported",
     )
     _require(not models[0].expert_parallel_bucket_groups and models[0].bucket_groups, "ordinary DDP buckets required")
-    _record_profile(args, group)
+    _record_profile(args, group, optimizer_profile)
     rope.inv_freq = rope.inv_freq.bfloat16().float()
     for module in attention:
         module.forward = MethodType(_sdpa_forward, module)
@@ -238,3 +263,4 @@ def before_train(args: Any, rollout_id: int, step_id: int, models: list[Any], op
         _install_bucket(bucket, owned, group)
     _install_objective()
     _OWNER = owner
+    _OWNER_OPTIMIZER_PROFILE = optimizer_profile

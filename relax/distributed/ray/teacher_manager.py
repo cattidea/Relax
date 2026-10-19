@@ -12,6 +12,11 @@ from relax.utils.env import Envs
 from relax.utils.http_utils import find_available_port
 from relax.utils.logging_utils import get_logger
 from relax.utils.opd.opd_utils import build_teacher_engine_args, build_teacher_overrides
+from relax.utils.opd.shared_teacher_lifecycle import (
+    ENGINE_LIFECYCLE_WAIT_S,
+    ENGINE_SHUTDOWN_WAIT_S,
+    NATIVE_LIFECYCLE_TIMEOUT_S,
+)
 
 
 logger = get_logger(__name__)
@@ -52,7 +57,7 @@ def _build_teacher_engine_env(args) -> dict[str, str]:
     return env_vars
 
 
-@ray.remote
+@ray.remote(concurrency_groups={"shutdown": 1})
 class TeacherManager(MultiEngineManager):
     """Launch and own Relax-managed OPD teacher SGLang engine(s)."""
 
@@ -87,6 +92,11 @@ class TeacherManager(MultiEngineManager):
         self._shared_pg = shared_pg
         self._shared_pg_tuple = pg
         self._bundle_offset = bundle_offset
+        self._strict_shared = bool(getattr(args, "_shared_teacher_strict_lifecycle", False))
+        self._lifecycle_failed = False
+        self._cleanup_errors: list[str] = []
+        if self._strict_shared and (not shared_pg or num_replicas != 1 or gpus_per_replica != 1):
+            raise ValueError("Strict shared Teacher lifecycle requires one shared TP1 engine")
 
         overrides = build_teacher_overrides(args, colocate_sync=shared_pg)
         self._overrides = overrides
@@ -110,7 +120,7 @@ class TeacherManager(MultiEngineManager):
         for engine in self.engines:
             if engine is None:
                 continue
-            base_url = ray.get(engine.get_url.remote())
+            base_url = ray.get(engine.get_url.remote(), timeout=ENGINE_LIFECYCLE_WAIT_S)
             urls.append(f"{base_url}/generate")
         return urls
 
@@ -118,6 +128,8 @@ class TeacherManager(MultiEngineManager):
         """Recover in place only when the teacher's endpoint can stay
         stable."""
         dead = [rank for rank, engine in enumerate(self.all_engines) if engine is None]
+        if getattr(self, "_strict_shared", False) and (dead or self._lifecycle_failed):
+            raise RuntimeError("Shared Teacher cannot rebuild runtime plans in place; restart is required")
         if dead and not self._shared_pg:
             # A dedicated replacement PG may land on another node. OPD callers
             # hold URLs captured at startup, so rebuilding here could advertise
@@ -127,6 +139,63 @@ class TeacherManager(MultiEngineManager):
                 f"Dedicated OPD teacher engines died at ranks={dead}; global restart is required to refresh URLs."
             )
         return super().recover()
+
+    def _shared_lifecycle(self, method: str, *, onloaded: bool, **kwargs) -> None:
+        if self._lifecycle_failed or any(engine is None for engine in self.all_engines):
+            raise RuntimeError("Shared Teacher lifecycle failed; restart is required")
+        if self._onloaded == onloaded:
+            return
+        try:
+            handles = [
+                getattr(engine, method).remote(timeout_seconds=NATIVE_LIFECYCLE_TIMEOUT_S, **kwargs)
+                for engine in self.engines
+            ]
+            ray.get(handles, timeout=ENGINE_LIFECYCLE_WAIT_S)
+            # Shutdown has its own actor thread and may have run while waiting.
+            if self._lifecycle_failed:
+                raise RuntimeError("Shared Teacher was closed during a lifecycle operation")
+            self._onloaded = onloaded
+        except BaseException:
+            self._lifecycle_failed = True
+            raise
+
+    def offload(self) -> None:
+        if not self._strict_shared:
+            return super().offload()
+        self._shared_lifecycle("release_memory_occupation", onloaded=False)
+
+    def onload(self, tags: list[str] | None = None) -> None:
+        if not self._strict_shared:
+            return super().onload(tags=tags)
+        if tags is not None:
+            raise ValueError("Shared Teacher must restore weights and caches together")
+        self._shared_lifecycle("resume_memory_occupation", onloaded=True, tags=None)
+
+    def shutdown(self) -> None:
+        if not self._strict_shared:
+            return super().shutdown()
+        self._lifecycle_failed = True
+        errors = list(getattr(self, "_cleanup_errors", []))
+        for rank, engine in enumerate(self.all_engines):
+            if engine is None:
+                continue
+            try:
+                # Native HTTP is bounded below this wait, so shutdown does not
+                # sit indefinitely behind an engine actor's blocked request.
+                ray.get(engine.shutdown.remote(), timeout=ENGINE_SHUTDOWN_WAIT_S)
+            except Exception as error:
+                errors.append(f"engine {rank} process cleanup unconfirmed: {type(error).__name__}: {error}")
+            finally:
+                try:
+                    ray.kill(engine)
+                except Exception as error:
+                    errors.append(f"engine {rank} actor termination unconfirmed: {error}")
+                self.all_engines[rank] = None
+                self._remove_owned_pg(rank)
+        if errors:
+            self._cleanup_errors = errors
+            raise RuntimeError("; ".join(errors))
+        self._onloaded = False
 
     # ------------------------------------------------------------------
     # MultiEngineManager hooks.

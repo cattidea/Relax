@@ -54,3 +54,6 @@ tensorboard_log
 # .github
 .github/copilot-instructions.md
 env.sh
+
+# Local MOPD weights, packages and optional codec runtime; never commit assets.
+/local/

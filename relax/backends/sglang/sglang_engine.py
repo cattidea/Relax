@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 from urllib.parse import quote, urlsplit
 
@@ -399,6 +400,9 @@ def launch_server_process(server_args: ServerArgs) -> multiprocessing.Process:
         f"routing_replay={optimize}, per_pos_token_ids={per_pos}"
     )
 
+    # Ray may prepend the detached Serve controller's original checkout after
+    # worker setup. Spawn must reimport the same module that created this engine.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
     p = multiprocessing.Process(target=_launch_server_with_patches, args=(server_args, os.getpid()))
     p.start()
 
@@ -1319,15 +1323,40 @@ class SGLangEngine(RayActor):
         response.raise_for_status()
         return response.json()["weight_version"]
 
-    def release_memory_occupation(self):
+    def release_memory_occupation(self, timeout_seconds: float | None = None):
+        if timeout_seconds is not None:
+            # The shared Teacher gateway has already drained all requests. A
+            # non-idle response is an error, not permission to retry a release.
+            try:
+                deadline = time.monotonic() + timeout_seconds
+                response = requests.get(
+                    f"http://{self.server_host}:{self.server_port}/flush_cache", timeout=timeout_seconds
+                )
+                response.raise_for_status()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Teacher flush exceeded the release deadline")
+                return self._make_request("release_memory_occupation", timeout=remaining)
+            except Exception:
+                # Preserve the native cause before the all-rank failure
+                # broadcast truncates its nested Ray traceback.
+                logger.exception("Shared Teacher native lifecycle failed: SGLangEngine.release_memory_occupation")
+                raise
         self.flush_cache()
         return self._make_request("release_memory_occupation")
 
-    def resume_memory_occupation(self, tags: list[str] = None):
+    def resume_memory_occupation(self, tags: list[str] = None, timeout_seconds: float | None = None):
         """Available tags for multi-stage resume: weights, kv_cache."""
+        if timeout_seconds is not None:
+            try:
+                return self._make_request("resume_memory_occupation", {"tags": tags}, timeout=timeout_seconds)
+            except Exception:
+                logger.exception("Shared Teacher native lifecycle failed: SGLangEngine.resume_memory_occupation")
+                raise
         return self._make_request(
             "resume_memory_occupation",
             {"tags": tags},
+            timeout=timeout_seconds,
         )
 
     def check_weights(self, action: str):

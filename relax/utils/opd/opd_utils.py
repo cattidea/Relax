@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 from argparse import Namespace
 from typing import TYPE_CHECKING, Any, Callable
@@ -14,6 +15,7 @@ import torch.distributed as dist
 from relax.core.node_group_affinity import with_control_plane_affinity
 from relax.utils.logging_utils import get_logger
 from relax.utils.metrics.rollout_metrics import compute_mopd_metrics  # noqa: F401 - keep the existing import path
+from relax.utils.opd.shared_teacher_lifecycle import MANAGER_SHUTDOWN_WAIT_S
 
 
 if TYPE_CHECKING:
@@ -194,6 +196,10 @@ def maybe_start_managed_opd_teacher(args: Any, *, runtime_env: dict | None = Non
     if not is_managed_opd_teacher_enabled(args) or getattr(args, "debug_train_only", False):
         return None, None
 
+    shared_manifest = getattr(args, "opd_shared_teacher_manifest", None)
+    if shared_manifest is not None:
+        return _start_managed_shared_teacher(args, shared_manifest, runtime_env=runtime_env)
+
     # ── Multi-teacher (MOPD) path: --opd-teacher-routes ────────────────────
     routes_json = getattr(args, "opd_teacher_routes", None)
     if routes_json is not None:
@@ -246,6 +252,76 @@ def maybe_start_managed_opd_teacher(args: Any, *, runtime_env: dict | None = Non
         f"opd_teacher_urls={args.opd_teacher_urls} ({len(urls)} replica(s))"
     )
     return shared_pg, teacher_manager
+
+
+def _start_managed_shared_teacher(
+    args: Any, manifest_path: str, *, runtime_env: dict | None = None
+) -> tuple[Any, list]:
+    """Logical Teachers share one TP1 engine and placement-group slice."""
+    import ray
+
+    from relax.utils.opd.disk_teacher_backend import read_manifest
+
+    manifest = read_manifest(manifest_path)
+    if manifest["backend"] not in {"sglang-disk-v1", "sglang-memory-v1", "sglang-adp-v1"} or manifest["tp_size"] != 1:
+        raise ValueError("Shared Teacher requires an explicit disk/memory/ADP backend and TP1")
+    if not is_managed_opd_teacher_colocate(args):
+        raise ValueError("Shared managed Teacher requires synchronous colocate mode")
+    if not getattr(args, "offload_rollout", False):
+        raise ValueError("Shared managed Teacher requires rollout/teacher offload for training")
+    actor_gpus = args.resource["actor"][1]
+    teacher_gpus = args.resource["teacher"][1]
+    if teacher_gpus != 1 or getattr(args, "teacher_num_gpus_per_engine", 1) not in (None, 1):
+        raise ValueError("Shared Teacher uses one physical TP1 Teacher engine")
+    if int(args.rollout_num_gpus) + teacher_gpus != actor_gpus:
+        raise ValueError("Shared Teacher requires rollout GPUs + teacher GPUs == actor GPUs")
+    initial_path = manifest["teachers"][manifest["initial_teacher"]]
+    if os.path.realpath(args.teacher_hf_checkpoint) != os.path.realpath(initial_path):
+        raise ValueError("--teacher-hf-checkpoint must match the shared manifest initial Teacher")
+
+    from relax.core.service import create_placement_group
+    from relax.distributed.ray.shared_teacher_manager import SharedTeacherManager
+
+    control_timeout = float(getattr(args, "opd_teacher_timeout_s", 1800))
+    if not math.isfinite(control_timeout) or control_timeout <= 0:
+        raise ValueError("Shared Teacher control timeout must be finite and positive")
+    shared_pg = create_placement_group(num_gpus=actor_gpus, node_group_affinity=getattr(args, "enable_affinity", True))
+    manager = None
+    try:
+        manager = SharedTeacherManager.options(
+            **with_control_plane_affinity(args, {"num_cpus": 1, "num_gpus": 0, "runtime_env": runtime_env})
+        ).remote(args, manifest_path, pg=shared_pg, runtime_env=runtime_env)
+        # The constructor includes native engine initialization (bounded at
+        # 900s) and package preparation. Do not leave startup unbounded either.
+        routes = ray.get(manager.get_routes.remote(), timeout=950 + 2 * control_timeout)
+        ray.get(manager.offload.remote(), timeout=control_timeout + MANAGER_SHUTDOWN_WAIT_S)
+    except BaseException as error:
+        # Controller only owns the returned tuple. Until return this function
+        # owns both handles, including failures during the initial offload.
+        cleanup_errors = []
+        if manager is not None:
+            try:
+                shutdown_managed_opd_teacher(manager)
+            except Exception as cleanup_error:
+                cleanup_errors.append(str(cleanup_error))
+        try:
+            ray.util.remove_placement_group(shared_pg[0])
+        except Exception as cleanup_error:
+            cleanup_errors.append(f"placement group cleanup unconfirmed: {cleanup_error}")
+        if cleanup_errors:
+            raise RuntimeError("Shared Teacher startup failed; " + "; ".join(cleanup_errors)) from error
+        raise
+    args.opd_teacher_routes_map = routes
+    args.opd_teacher_url = next(iter(routes.values()))[0]
+    args.opd_require_all_teacher_scores = True
+    logger.info(
+        "Shared MOPD full-reload baseline (%s): %s logical Teachers, 1 engine GPU, %s rollout GPUs, %s training GPUs",
+        manifest["backend"],
+        len(manifest["teachers"]),
+        args.rollout_num_gpus,
+        actor_gpus,
+    )
+    return shared_pg, [manager]
 
 
 def _start_managed_multi_teacher(
@@ -413,12 +489,20 @@ def shutdown_managed_opd_teacher(teacher_manager: Any) -> None:
 
     # Support both single manager and list of managers (MOPD multi-teacher).
     managers = teacher_manager if isinstance(teacher_manager, list) else [teacher_manager]
+    errors = []
     for mgr in managers:
         try:
-            ray.get(mgr.shutdown.remote(), timeout=30)
+            ray.get(mgr.shutdown.remote(), timeout=MANAGER_SHUTDOWN_WAIT_S)
             logger.info("OPD teacher shut down.")
         except Exception as e:
-            logger.warning(f"Failed to shut down OPD teacher: {e}")
+            errors.append(f"{type(e).__name__}: {e}")
+        finally:
+            try:
+                ray.kill(mgr)
+            except Exception as e:
+                errors.append(f"manager termination unconfirmed: {e}")
+    if errors:
+        raise RuntimeError("OPD teacher cleanup unconfirmed: " + "; ".join(errors))
 
 
 def has_managed_opd_teacher_manager(owner: Any) -> bool:

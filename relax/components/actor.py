@@ -214,6 +214,15 @@ class Actor(Base):
         except Exception as e:
             error_msg = f"Actor training failed at step {self.step}: {type(e).__name__}: {str(e)}"
             self._logger.exception(error_msg)
+            if getattr(self.config, "opd_shared_teacher_manifest", None):
+                # A shared Teacher may be poisoned after an uncertain update.
+                # Report best-effort, but never turn its failure into a normal
+                # background-loop completion or replace the original error.
+                try:
+                    self.healthy.report_error.remote("actor", error_msg)
+                except Exception as report_error:
+                    self._logger.warning("Failed to report shared Teacher training error: %s", report_error)
+                raise
             self.healthy.report_error.remote("actor", error_msg)
             if not getattr(self.config, "use_health_check", False):
                 raise

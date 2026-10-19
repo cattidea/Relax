@@ -142,6 +142,71 @@ def test_teacher_manager_exposes_ray_actor_api(monkeypatch):
     assert hasattr(teacher_manager.TeacherManager, "options")
 
 
+def strict_manager(monkeypatch):
+    module = _import_teacher_manager(monkeypatch)
+    cls = module.TeacherManager.__ray_metadata__.modified_class
+    manager = object.__new__(cls)
+    engine = SimpleNamespace(
+        release_memory_occupation=MagicMock(), resume_memory_occupation=MagicMock(), shutdown=MagicMock()
+    )
+    manager.all_engines = [engine]
+    manager.nodes_per_engine = 1
+    manager._engine_placements = {}
+    manager._strict_shared = True
+    manager._lifecycle_failed = False
+    manager._onloaded = True
+    return module, manager, engine
+
+
+def test_shared_teacher_native_timeout_is_fatal_without_automatic_rebuild(monkeypatch):
+    module, manager, engine = strict_manager(monkeypatch)
+
+    def fail(refs, *, timeout):
+        assert timeout == 25
+        raise TimeoutError("native release completion unknown")
+
+    monkeypatch.setattr(module.ray, "get", fail)
+    with pytest.raises(TimeoutError):
+        manager.offload()
+    engine.release_memory_occupation.remote.assert_called_once_with(timeout_seconds=20)
+    assert manager._lifecycle_failed and manager._onloaded
+    with pytest.raises(RuntimeError, match="restart"):
+        manager.onload()
+    engine.resume_memory_occupation.remote.assert_not_called()
+    with pytest.raises(RuntimeError, match="restart"):
+        manager.recover()
+
+
+def test_shared_shutdown_poison_prevents_late_offload_success(monkeypatch):
+    module, manager, engine = strict_manager(monkeypatch)
+
+    def complete_after_shutdown(refs, *, timeout):
+        manager._lifecycle_failed = True
+
+    monkeypatch.setattr(module.ray, "get", complete_after_shutdown)
+    with pytest.raises(RuntimeError, match="closed"):
+        manager.offload()
+    assert manager._onloaded
+
+
+def test_shared_engine_shutdown_failure_is_not_swallowed(monkeypatch):
+    module, manager, engine = strict_manager(monkeypatch)
+    killed = []
+
+    def fail(ref, *, timeout):
+        assert timeout == 30
+        raise TimeoutError("engine shutdown did not complete")
+
+    monkeypatch.setattr(module.ray, "get", fail)
+    monkeypatch.setattr(module.ray, "kill", killed.append)
+    with pytest.raises(RuntimeError, match="process cleanup unconfirmed"):
+        manager.shutdown()
+    assert killed == [engine]
+    assert manager._lifecycle_failed
+    with pytest.raises(RuntimeError, match="process cleanup unconfirmed"):
+        manager.shutdown()
+
+
 @pytest.mark.parametrize(("gpus_per_replica", "num_nodes"), [(2, 1), (16, 2)])
 def test_teacher_recovery_reuses_original_endpoints(monkeypatch, gpus_per_replica, num_nodes):
     teacher_manager_module, manager = _make_teacher_manager(monkeypatch, gpus_per_replica=gpus_per_replica)

@@ -9,7 +9,7 @@ import traceback
 from argparse import Namespace
 from enum import Enum, IntEnum
 from functools import partial
-from typing import Any, Optional
+from typing import Any, Awaitable, Optional
 
 import ray
 import transfer_queue as tq
@@ -167,6 +167,7 @@ class Controller:
         self.config = config
         self.serve_dict = {}
         self._teacher_manager = None
+        self._shared_teacher_failure: Optional[RuntimeError] = None
         # Initialize health management system
         self.runtime_env = runtime_env
         self._health_check_enabled = getattr(config, "use_health_check", False)
@@ -1005,6 +1006,29 @@ class Controller:
             return
         shutdown_agentic_chat_api_services()
 
+    async def _supervise_shared_teacher_services(self, operation: Awaitable[Any]) -> Any:
+        """Deliver health failures to the driver instead of rebuilding a
+        Teacher.
+
+        Cancelling this local waiter is not confirmation that remote work has
+        stopped. The entrypoint must still run its scoped owned cleanup.
+        """
+        task = asyncio.ensure_future(operation)
+        try:
+            while not task.done():
+                if self._shared_teacher_failure is not None:
+                    raise self._shared_teacher_failure
+                await asyncio.wait((task,), timeout=0.1)
+            if self._shared_teacher_failure is not None:
+                raise self._shared_teacher_failure
+            return await task
+        finally:
+            # Retrieve any late exception without waiting for remote services
+            # to acknowledge cancellation; shutdown owns their disposal.
+            task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+            if not task.done():
+                task.cancel()
+
     def training_loop(self):
         # Start all services in parallel without blocking on their completion
         # Each service runs independently: rollout, actor, critic, etc.
@@ -1107,7 +1131,15 @@ class Controller:
         resume_existing = False
         while True:
             try:
-                run(run_all_services(resume_existing=resume_existing))
+                operation = run_all_services(resume_existing=resume_existing)
+                if getattr(self.config, "opd_shared_teacher_manifest", None):
+                    operation = self._supervise_shared_teacher_services(operation)
+                run(operation)
+                if (
+                    getattr(self.config, "opd_shared_teacher_manifest", None)
+                    and self._shared_teacher_failure is not None
+                ):
+                    raise self._shared_teacher_failure
                 logger.info("All services running successfully")
                 return  # Normal completion, exit
             except Exception as e:
@@ -1161,14 +1193,28 @@ class Controller:
         instead of being orphaned.
         """
         logger.info("Controller shutting down — cleaning up engine processes...")
+        cleanup_errors = []
         if hasattr(self, "_health_manager"):
-            self.stop_health_check()
+            try:
+                self.stop_health_check()
+            except Exception as error:
+                cleanup_errors.append(f"health monitor: {error}")
 
-        self._dispose_rollout_manager()
+        try:
+            if not self._dispose_rollout_manager():
+                cleanup_errors.append("rollout owner disposal unconfirmed")
+        except Exception as error:
+            cleanup_errors.append(f"rollout owner: {error}")
 
-        shutdown_managed_opd_teacher(self._teacher_manager)
+        try:
+            shutdown_managed_opd_teacher(getattr(self, "_teacher_manager", None))
+        except Exception as error:
+            cleanup_errors.append(f"Teacher: {error}")
 
-        self._shutdown_agentic_rollout_services()
+        try:
+            self._shutdown_agentic_rollout_services()
+        except Exception as error:
+            cleanup_errors.append(f"agentic rollout: {error}")
 
         # Router processes must be terminated explicitly.  They are daemonic,
         # but ``daemon=True`` only reaps through multiprocessing's atexit hook,
@@ -1184,12 +1230,16 @@ class Controller:
                 logger.info(f"Terminated {killed} router process(es) during shutdown")
         except Exception as e:
             logger.warning(f"Failed to terminate router processes during shutdown: {e}")
+            cleanup_errors.append(f"router: {e}")
 
         try:
             self._cleanup_s3_model_weights_after_init(force=True)
         except Exception as e:
             logger.warning(f"Failed to clean S3 model SHM cache during shutdown: {e}")
+            cleanup_errors.append(f"model cache: {e}")
 
+        if cleanup_errors:
+            raise RuntimeError("Controller cleanup unconfirmed: " + "; ".join(cleanup_errors))
         logger.info("Controller shutdown complete.")
 
     def add_serve(self, role: str) -> None:
@@ -1220,6 +1270,18 @@ class Controller:
         Args:
             role: Service role name to restart.
         """
+        if getattr(self.config, "opd_shared_teacher_manifest", None):
+            # Health callbacks run outside the driver's training thread. Latch
+            # the first failure before touching any restart/placement state;
+            # the shared-only supervisor raises it through normal cleanup.
+            with self._pending_task_refs_lock:
+                if self._shared_teacher_failure is None:
+                    self._shared_teacher_failure = RuntimeError(
+                        f"Shared Teacher run cannot automatically restart unhealthy service '{role}'; "
+                        "the complete shared manager must be rebuilt by a new run"
+                    )
+            logger.error("[shared_teacher_restart_refused] role=%s error=%s", role, self._shared_teacher_failure)
+            return
         logger.info(f"Restarting service '{role}'...")
         # Must mirror register_all_serve's algo-key resolution. Offline mode is
         # identified by ``loss_type``, not by ``advantage_estimator``

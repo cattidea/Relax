@@ -67,6 +67,29 @@ def test_controller_shutdown_disposes_rollout_owner(monkeypatch, controller_modu
     assert events == ["dispose", "teacher", "agentic", "routers"]
 
 
+def test_teacher_cleanup_failure_does_not_skip_other_owned_cleanup(monkeypatch, controller_module):
+    controller = object.__new__(controller_module.Controller)
+    events = []
+    controller._teacher_manager = object()
+    controller._dispose_rollout_manager = lambda: events.append("dispose") or True
+    controller._shutdown_agentic_rollout_services = lambda: events.append("agentic")
+    controller._cleanup_s3_model_weights_after_init = lambda **kwargs: events.append("cache")
+
+    def fail_teacher(manager):
+        events.append("teacher")
+        raise RuntimeError("owned Teacher worker completion unknown")
+
+    monkeypatch.setattr(controller_module, "shutdown_managed_opd_teacher", fail_teacher)
+    monkeypatch.setitem(
+        sys.modules,
+        "relax.distributed.ray.rollout",
+        SimpleNamespace(stop_launched_routers=lambda: events.append("routers") or 0),
+    )
+    with pytest.raises(RuntimeError, match="Teacher worker completion unknown"):
+        controller.shutdown()
+    assert events == ["dispose", "teacher", "agentic", "routers", "cache"]
+
+
 def test_global_restart_disposes_owner_before_deleting_deployments(monkeypatch, controller_module):
     controller = object.__new__(controller_module.Controller)
     controller._global_restart_count = 0

@@ -320,6 +320,8 @@ class OpdManager:
 
         async with _create_teacher_client_session(self.args) as session:
             fetch_results = await asyncio.gather(*[self._teacher_prefill(s, session) for s in sample_list])
+            if getattr(self.args, "opd_require_all_teacher_scores", False):
+                self._raise_if_any_failed(sample_list, fetch_results)
             self._raise_if_all_failed(sample_list, fetch_results)
 
             if self.topk_worker is not None and self.topk_worker.spec.student_at_teacher:
@@ -562,6 +564,14 @@ class OpdManager:
             sample.opd_topk_student_log_probs = channels.get(opd_main_worker.TopkWorker.TRANSFER_STUDENT_LOG_PROBS)
             sample.opd_topk_teacher_log_probs = channels.get(opd_main_worker.TopkWorker.TRANSFER_TEACHER_LOG_PROBS)
             sample.opd_topk_ksz = channels.get(opd_main_worker.TopkWorker.TRANSFER_K_LENGTHS)
+
+    @staticmethod
+    def _raise_if_any_failed(samples: list[Sample], fetch_results: list[bool]) -> None:
+        failed = [
+            s for s, ok in zip(samples, fetch_results) if int(getattr(s, "response_length", 0) or 0) > 0 and not ok
+        ]
+        if failed:
+            raise RuntimeError(f"Strict OPD teacher scoring failed for {len(failed)} non-empty samples")
 
     @staticmethod
     def _raise_if_all_failed(samples: list[Sample], fetch_results: list[bool]) -> None:

@@ -94,8 +94,9 @@ def _compute_gsm8k_score(response: str, label) -> float:
 def get_mopd_reward(response: str, label, metadata: dict | None = None) -> float:
     """Per-data-source reward routing for MOPD.
 
-    Routes each sample to its domain-appropriate scorer based on ``data_source``
-    in metadata, always returning a scalar (rm_type="mopd" carries no reward_key).
+    Routes by explicit ``reward_source`` when present, falling back to
+    ``data_source`` for existing recipes. Teacher IDs can then use data_source
+    without losing the original dataset's scorer. Always returns a scalar.
     Each source delegates to the same integrated reward the standalone rm_type
     would use, so MOPD scoring matches single-source training:
       - geometry3k / geo3k         : rm_type="math" scorer (grade_answer_verl, {0,1})
@@ -103,7 +104,8 @@ def get_mopd_reward(response: str, label, metadata: dict | None = None) -> float
       - dapo-math                  : DAPO scorer's scalar "score" (dict → scalar)
       - all others                 : GSM8K scorer with EOS/repeat hardening (-1/1)
     """
-    data_source = (metadata or {}).get("data_source", "").lower()
+    metadata = metadata or {}
+    data_source = metadata.get("reward_source", metadata.get("data_source", "")).lower()
     if "geometry3k" in data_source or "geo3k" in data_source:
         return 1.0 if grade_answer_verl(response, label) else 0.0
     if "multimodal-open-r1" in data_source or "openr1mm" in data_source:

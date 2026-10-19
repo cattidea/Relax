@@ -59,6 +59,9 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 # shellcheck source=./kernel-cache.sh
 source "${DIR}/kernel-cache.sh"
 
+if [ "${RELAX_SKIP_GLOBAL_CLEANUP:-0}" = "1" ]; then
+    echo "=== Preserving existing processes, Ray jobs, Serve apps and placement groups ==="
+else
 # ── clean up residual Relax/SGLang WORKER processes (NOT ray daemons) ────────
 # IMPORTANT: Do NOT pkill ray or run ray stop — the cluster is managed externally.
 # kill_for_ray.sh was rewritten to a WHITELIST (positive-match) that only kills
@@ -149,6 +152,7 @@ try:
 finally:
     ray.shutdown()
 PY
+fi
 
 set -x
 
@@ -210,6 +214,7 @@ export RUNTIME_ENV_JSON="{
    \"PYTHONPATH\": \"${PYTHONPATH}\",
    \"CUDA_DEVICE_MAX_CONNECTIONS\": \"1\",
    \"RAY_OVERRIDE_JOB_RUNTIME_ENV\": \"1\",
+   \"RELAX_SKIP_GLOBAL_CLEANUP\": \"${RELAX_SKIP_GLOBAL_CLEANUP:-0}\",
    \"OMP_NUM_THREADS\": \"${OMP_NUM_THREADS:-24}\",
    \"MKL_NUM_THREADS\": \"${MKL_NUM_THREADS:-24}\",
    \"OPENBLAS_NUM_THREADS\": \"${OPENBLAS_NUM_THREADS:-24}\",

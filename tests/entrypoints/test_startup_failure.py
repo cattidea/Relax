@@ -52,10 +52,74 @@ def _train_namespace():
         "_ctrl": None,
         "_shutdown_done": False,
         "_kernel_cache_heartbeat": None,
-        "_SHUTDOWN_TIMEOUT_SEC": 60,
+        "_SHUTDOWN_TIMEOUT_SEC": 120,
         "_NORMAL_SHUTDOWN_TIMEOUT_SEC": 1800,
     }
-    return _load_definitions("relax/entrypoints/train.py", {"main", "_hard_exit", "_graceful_shutdown"}, namespace)
+    namespace["ray"].get_runtime_context.return_value.runtime_env = {}
+    return _load_definitions(
+        "relax/entrypoints/train.py",
+        {"main", "_hard_exit", "_graceful_shutdown", "_shutdown_serve_for_job"},
+        namespace,
+    )
+
+
+@pytest.mark.parametrize("initialized", [False, True])
+@pytest.mark.parametrize("configured_hook", [None, "configured.setup"])
+@pytest.mark.parametrize("job_hook", ["job.setup", None, "exported_callable"])
+def test_train_forwards_effective_job_setup_hook_without_overriding_config(
+    monkeypatch, initialized, configured_hook, job_hook
+):
+    monkeypatch.delenv("RELAX_KERNEL_CACHE_DIR", raising=False)
+    ns = _train_namespace()
+    effective = {"worker_process_setup_hook": job_hook} if job_hook else {}
+    ns["ray"].is_initialized.return_value = initialized
+    ns["ray"].get_runtime_context.return_value.runtime_env = effective
+    config = {"env_vars": {"EXAMPLE": "1"}}
+    if configured_hook:
+        config["worker_process_setup_hook"] = configured_hook
+    ns["post_process_env"] = lambda _args, _env: config
+    received = []
+
+    class Controller:
+        def __init__(self, _args, runtime_env):
+            received.append(runtime_env)
+
+        def training_loop(self):
+            pass
+
+    ns["Controller"] = Controller
+    ns["_graceful_shutdown"] = Mock()
+    ns["main"](SimpleNamespace())
+
+    expected = {"env_vars": {"EXAMPLE": "1"}}
+    expected_hook = configured_hook or (job_hook if job_hook == "job.setup" else None)
+    if expected_hook:
+        expected["worker_process_setup_hook"] = expected_hook
+    assert received == [expected]
+    ns["_graceful_shutdown"].assert_called_once_with(exit_code=0)
+    assert ns["ray"].init.called is not initialized
+
+
+def test_scoped_serve_cleanup_deletes_only_owned_applications(monkeypatch):
+    monkeypatch.setenv("RELAX_SKIP_GLOBAL_CLEANUP", "1")
+    ns = _train_namespace()
+    ns["_ctrl"] = SimpleNamespace(
+        serve_dict={"actor": object(), "rollout": object()},
+        dcs=object(),
+        _metrics_service_enabled=False,
+        _autoscaler_config=None,
+    )
+    ns["_shutdown_serve_for_job"]()
+    assert [call.args[0] for call in ns["serve"].delete.call_args_list] == ["actor", "dcs_coordinator", "rollout"]
+    ns["serve"].shutdown.assert_not_called()
+
+
+def test_scoped_serve_cleanup_before_controller_preserves_existing_apps(monkeypatch):
+    monkeypatch.setenv("RELAX_SKIP_GLOBAL_CLEANUP", "1")
+    ns = _train_namespace()
+    ns["_shutdown_serve_for_job"]()
+    ns["serve"].delete.assert_not_called()
+    ns["serve"].shutdown.assert_not_called()
 
 
 @pytest.mark.parametrize("fail_at", ["startup", "training", None])
@@ -130,7 +194,7 @@ else:
 ns["_graceful_shutdown"](exit_code={exit_code})
 """
     result = subprocess.run([sys.executable, "-c", script], timeout=10, capture_output=True, text=True)
-    assert result.returncode == exit_code, result.stderr
+    assert result.returncode == (exit_code or 1), result.stderr
 
 
 class _FakePhase(str, Enum):
@@ -364,7 +428,7 @@ def test_train_normal_shutdown_arms_long_watchdog_and_cancels_it():
     call = fake_threading.Timer.call_args
     assert call.args[0] == ns["_NORMAL_SHUTDOWN_TIMEOUT_SEC"]
     assert call.args[1] is ns["os"]._exit
-    assert call.kwargs["args"] == (0,)
+    assert call.kwargs["args"] == (1,)
     timer.start.assert_called_once()
     timer.cancel.assert_called_once()
     ns["_hard_exit"].assert_called_once_with(0)
@@ -379,6 +443,35 @@ def test_train_failure_shutdown_uses_short_watchdog_budget():
     call = fake_threading.Timer.call_args
     assert call.args[0] == ns["_SHUTDOWN_TIMEOUT_SEC"]
     assert call.kwargs["args"] == (1,)
+
+
+@pytest.mark.parametrize("failure", ["controller", "serve", "ray"])
+@pytest.mark.parametrize("original_exit", [0, 1, 143])
+def test_cleanup_failure_never_reports_normal_success_and_preserves_error_exit(failure, original_exit):
+    ns = _train_namespace()
+    ns["threading"] = Mock()
+    ns["_hard_exit"] = Mock()
+    ns["_ctrl"] = Mock()
+    targets = {"controller": ns["_ctrl"].shutdown, "serve": ns["serve"].shutdown, "ray": ns["ray"].shutdown}
+    targets[failure].side_effect = RuntimeError("injected cleanup failure")
+    ns["_graceful_shutdown"](exit_code=original_exit)
+    ns["_hard_exit"].assert_called_once_with(original_exit or 1)
+    ns["_ctrl"].shutdown.assert_called_once()
+    ns["serve"].shutdown.assert_called_once()
+    ns["ray"].shutdown.assert_called_once()
+    assert "Cleanup unconfirmed" in ns["logger"].error.call_args.args[0]
+
+
+def test_normal_cleanup_failure_produces_real_nonzero_process_exit():
+    script = f"""
+import runpy
+ns = runpy.run_path({str(Path(__file__).resolve())!r})["_train_namespace"]()
+ns["_ctrl"] = ns["Controller"].return_value
+ns["_ctrl"].shutdown.side_effect = RuntimeError("Teacher cleanup unconfirmed")
+ns["_graceful_shutdown"](exit_code=0)
+"""
+    result = subprocess.run([sys.executable, "-c", script], timeout=10, capture_output=True, text=True)
+    assert result.returncode == 1, result.stderr
 
 
 def test_controller_partial_startup_cleans_teacher_and_routers(monkeypatch):

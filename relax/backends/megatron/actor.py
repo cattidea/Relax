@@ -1287,7 +1287,7 @@ class MegatronTrainRayActor(TrainRayActor):
         self._run_step_evaluation(rollout_id, end_update_weight=end_update_weight)
 
     def train(self, rollout_id: int) -> None:
-        if self.args.offload_rollout and dist.get_rank() == 0:
+        def offload_auxiliary_engines() -> None:
             pre_train_offload_handles = []
             if self.genrm_manager is not None:
                 # A list of one or more GenRM manager handles (one per instance).
@@ -1295,6 +1295,13 @@ class MegatronTrainRayActor(TrainRayActor):
             append_managed_opd_teacher_offload_handle(pre_train_offload_handles, self)
             if pre_train_offload_handles:
                 ray.get(pre_train_offload_handles)
+
+        if self.args.offload_rollout and getattr(self.args, "opd_shared_teacher_manifest", None):
+            from relax.utils.opd.shared_teacher_lifecycle import run_rank_zero_lifecycle
+
+            run_rank_zero_lifecycle(offload_auxiliary_engines, process_group=get_gloo_group(), label="offload")
+        elif self.args.offload_rollout and dist.get_rank() == 0:
+            offload_auxiliary_engines()
 
         # Gate all ranks behind rank-0's GenRM/OPD-teacher offload: otherwise
         # other ranks wake_up() and reclaim GPU memory while colocated GenRM or
@@ -2864,7 +2871,7 @@ class MegatronTrainRayActor(TrainRayActor):
             # still hold GPU memory, causing cuMemCreate OOM in SGLang schedulers.
             dist.barrier(group=get_gloo_group())
 
-        if self.args.offload_rollout and dist.get_rank() == 0:
+        def onload_rollout_and_teacher() -> None:
             # Onload rollout weights. genRM (no NCCL weight sync — the reward
             # model is static) is deferred to after the weight all-gather: in
             # colocate mode its static pool would collide with the all-gather's
@@ -2872,6 +2879,13 @@ class MegatronTrainRayActor(TrainRayActor):
             onload_handles = [self.rollout_manager.onload_weights.remote()]
             append_managed_opd_teacher_onload_handle(onload_handles, self)
             ray.get(onload_handles)
+
+        if self.args.offload_rollout and getattr(self.args, "opd_shared_teacher_manifest", None):
+            from relax.utils.opd.shared_teacher_lifecycle import run_rank_zero_lifecycle
+
+            run_rank_zero_lifecycle(onload_rollout_and_teacher, process_group=get_gloo_group(), label="onload")
+        elif self.args.offload_rollout and dist.get_rank() == 0:
+            onload_rollout_and_teacher()
 
         if self.args.use_fault_tolerance:
             process_group = get_gloo_group()

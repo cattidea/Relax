@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Relax Authors. All Rights Reserved.
 
 import sys
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
 
@@ -14,9 +15,18 @@ pytest_plugins = ["tests.backends.sglang.test_router_registration"]
 def test_launch_server_process_returns_owned_process_and_only_head_waits(monkeypatch, sglang_engine_module, node_rank):
     module = sglang_engine_module
     events = []
+    checkout = str(Path(module.__file__).resolve().parents[3])
+    monkeypatch.setattr(sys, "path", ["/stale/serve-checkout", *sys.path])
 
     process = Mock()
-    process.start.side_effect = lambda: events.append("start")
+
+    def start():
+        # The worker hook ran earlier; Ray can subsequently prepend its old
+        # controller path. Check ordering at the actual spawn boundary.
+        assert sys.path[0] == checkout
+        events.append("start")
+
+    process.start.side_effect = start
     process.is_alive.return_value = True
     multiprocessing = SimpleNamespace(set_start_method=Mock(), Process=Mock(return_value=process))
 

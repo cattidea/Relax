@@ -33,8 +33,31 @@ logger = get_logger(__name__)
 _ctrl: Controller | None = None
 _shutdown_done = False
 _kernel_cache_heartbeat = None
-_SHUTDOWN_TIMEOUT_SEC = 60
+# Current shared-Teacher layout: health stop (2s), rollout lookup/dispose
+# (5+35s), Teacher (50s), one owned router (7s), then Serve/Ray bookkeeping.
+# A watchdog expiry is still unconfirmed cleanup and must never exit zero.
+_SHUTDOWN_TIMEOUT_SEC = 120
 _NORMAL_SHUTDOWN_TIMEOUT_SEC = 1800
+
+
+def _shutdown_serve_for_job() -> None:
+    if os.environ.get("RELAX_SKIP_GLOBAL_CLEANUP") != "1":
+        serve.shutdown()
+        return
+    # The shared-teacher runner rejects pre-existing Serve applications before
+    # submitting. Delete only applications created by this controller, leaving
+    # the shared Serve control plane and any unrelated applications running.
+    if _ctrl is None:
+        return
+    names = set(getattr(_ctrl, "serve_dict", {}))
+    if getattr(_ctrl, "dcs", None) is not None:
+        names.add("dcs_coordinator")
+    if getattr(_ctrl, "_metrics_service_enabled", False):
+        names.add("metrics")
+    if getattr(_ctrl, "_autoscaler_config", None) is not None:
+        names.add("autoscaler")
+    for name in sorted(names):
+        serve.delete(str(name))
 
 
 def _hard_exit(code: int):
@@ -68,9 +91,10 @@ def _graceful_shutdown(sig=None, frame=None, exit_code: int | None = None):
     timeout_sec = _SHUTDOWN_TIMEOUT_SEC if exit_code else _NORMAL_SHUTDOWN_TIMEOUT_SEC
     if _kernel_cache_heartbeat is not None:
         timeout_sec += int(os.environ.get("RELAX_KERNEL_CACHE_EXIT_TIMEOUT_SEC", "600"))
-    watchdog = threading.Timer(timeout_sec, os._exit, args=(effective_exit_code,))
+    watchdog = threading.Timer(timeout_sec, os._exit, args=(effective_exit_code or 1,))
     watchdog.daemon = True
     watchdog.start()
+    cleanup_errors = []
     try:
         sig_name = signal.Signals(sig).name if sig else "atexit"
         logger.info(f"Graceful shutdown triggered ({sig_name}) — cleaning up SGLang engines...")
@@ -89,23 +113,36 @@ def _graceful_shutdown(sig=None, frame=None, exit_code: int | None = None):
                 _ctrl.shutdown()
             except Exception as e:
                 logger.warning(f"Controller shutdown error during {sig_name}: {e}")
+                cleanup_errors.append(f"Controller: {e}")
 
         if ray.is_initialized():
             try:
-                serve.shutdown()
-                if _kernel_cache_heartbeat is not None:
+                _shutdown_serve_for_job()
+            except Exception as e:
+                logger.warning(f"Serve shutdown error during {sig_name}: {e}")
+                cleanup_errors.append(f"Serve: {e}")
+            if _kernel_cache_heartbeat is not None:
+                try:
                     results = _kernel_cache_heartbeat.finalize(
                         sig_name,
                         timeout_sec=int(os.environ.get("RELAX_KERNEL_CACHE_EXIT_TIMEOUT_SEC", "600")),
                     )
                     logger.info(f"Kernel cache agents finalized: {results}")
+                except Exception as e:
+                    logger.warning(f"Kernel cache shutdown error during {sig_name}: {e}")
+                    cleanup_errors.append(f"kernel cache: {e}")
+            try:
                 ray.shutdown()
                 logger.info("Ray shutdown successfully")
             except Exception as e:
                 logger.warning(f"Ray shutdown error during {sig_name}: {e}")
+                cleanup_errors.append(f"Ray: {e}")
 
+        if cleanup_errors:
+            logger.error("Cleanup unconfirmed; exiting with failure: %s", "; ".join(cleanup_errors))
+            effective_exit_code = effective_exit_code or 1
         if exit_code is not None:
-            _hard_exit(exit_code)
+            _hard_exit(effective_exit_code)
     finally:
         watchdog.cancel()
 
@@ -137,6 +174,12 @@ def main(args):
                 )
             except RuntimeError:
                 pass
+
+        # Detached Serve deployments do not inherit this job's importable hook.
+        # Callable hooks are GCS references, not reusable dotted import paths.
+        setup_hook = ray.get_runtime_context().runtime_env.get("worker_process_setup_hook")
+        if isinstance(setup_hook, str) and "." in setup_hook:
+            runtime_env.setdefault("worker_process_setup_hook", setup_hook)
 
         if os.environ.get("RELAX_KERNEL_CACHE_DIR"):
             from relax.distributed.ray.kernel_cache import start_kernel_cache_heartbeat_from_env

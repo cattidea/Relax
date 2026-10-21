@@ -46,8 +46,8 @@ def parameter_mapping_specs(text: str, vision: str) -> list[tuple[str, str, Any]
         "language_model.embedding.word_embeddings.weight": f"{text}.embed_tokens.weight",
         "language_model.output_layer.weight": "lm_head.weight",
         "language_model.decoder.final_layernorm.weight": f"{text}.norm.weight",
-        f"{layer}.input_layernorm.weight": f"{hf_layer}.input_layernorm.weight",
-        f"{layer}.pre_mlp_layernorm.weight": f"{hf_layer}.post_attention_layernorm.weight",
+        f"{layer}.self_attention.linear_qkv.layer_norm_weight": f"{hf_layer}.input_layernorm.weight",
+        f"{layer}.mlp.linear_fc1.layer_norm_weight": f"{hf_layer}.post_attention_layernorm.weight",
         f"{layer}.self_attention.linear_proj.weight": f"{hf_layer}.self_attn.o_proj.weight",
         f"{layer}.mlp.linear_fc2.weight": f"{hf_layer}.mlp.down_proj.weight",
     }

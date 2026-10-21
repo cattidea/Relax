@@ -51,9 +51,23 @@ default 1,078 updates correspond to two padded epochs only for 275,601 rows.
 For other inputs, explicitly override `--num-rollout`; the custom dataset uses
 this update count rather than `--num-epoch`.
 
+The example selects Bridge's native **Kaiming-uniform LoRA A initialization**
+(`RELAX_LORA_A_INIT_METHOD=kaiming`); LoRA B retains Bridge's zero initialization.
+The initializer is included in the Ray runtime environment. Set
+`RELAX_LORA_A_INIT_METHOD=xavier` explicitly to use Bridge's Xavier option, with a
+new `EXP_NAME`. Other Relax recipes keep their existing initializer defaults.
+
+本例默认使用 Bridge 原生 **Kaiming-uniform 初始化 LoRA A**，B 保持零初始化，
+配置会传入 Ray 训练进程；如需 Xavier，可设置 `RELAX_LORA_A_INIT_METHOD=xavier`，
+并更换 `EXP_NAME`。其他 Relax recipe 的默认初始化不变。
+
 The native checkpoint path is `${SAVE_DIR}/${EXP_NAME}` for both save and load,
 with an interval of 200 updates and retention of two checkpoints. Reuse the same
 path to resume the same experiment; use a new `EXP_NAME` for a different run.
+The default experiment is `qwen2-vl-2b-nli-bridge-lora-kaiming-dp8`. Start this
+recipe in a new directory: historical precision-profile checkpoints used a
+different norm layout and optimizer/RNG settings and are not supported resume
+inputs for this recipe.
 ClearML project defaults to `Relax/sft/seq-contrast`; each launch has a new task
 name and local log, while the resume path stays fixed. Submission blocks unless
 `RAY_NO_WAIT` is explicitly nonempty.
@@ -80,12 +94,13 @@ ClearML 每次启动新任务，训练恢复由持久化 checkpoint 决定。
   CPU prepack, and portable HF export are rejected. Native checkpoints remain
   the supported resume artifacts.
 - The example uses Bridge's existing **CanonicalLoRA** with seven independent
-  Q/K/V, output, gate/up and down projection adapters. The Qwen2-VL dispatcher
-  preserves the SDK parameters and checkpoint keys while using pair-aware
-  padded projection inputs and separate Q/K/V and gate/up computation branches.
-  Parameter count and checkpoint inclusion must be verified on the real model. Matching this
-  parameterization alone does **not** establish optimizer-trajectory or quality
-  equivalence with RedAccel/HF.
+  Q/K/V, output, gate/up and down projection adapters, with the standard Bridge
+  forward and Transformer Engine layer specification. HF norm weights map to
+  the corresponding fused TE projection norms.
+- Data ordering uses the existing `NLIPairDataset`/`IndexManager` path. The script
+  retains `--data-parallel-random-init` for per-rank RNG state. There are no
+  reference-order replay, padded/eager projection overrides, HF norm/attention
+  replacements, or custom optimizer/gradient-communication hooks.
 
 Pair 分卡后才展开；完整负例集合不拆成独立 microbatch。token 预算不能证明实际显存足够。
 当前只支持同步 DP、THD，明确拒绝尚未接入的并行模式和评测/导出组合。
@@ -93,19 +108,18 @@ Pair 分卡后才展开；完整负例集合不拆成独立 microbatch。token �
 
 CPU tests exercise the production iterator/loss dispatch, pair/resume contracts,
 real two-process Gloo loss/gradients, HF vision embeddings/positions and mapping
-key coverage. The language boundary in the CPU vision tests is a recording
-module, not MCore attention. Controlled single-node, eight-GPU tests also
-exercise actual weight loading and shared-loop forward/backward. Single-block
-tests verify valid-token outputs and input gradients, BF16-rounded local
-parameter gradients, activation recomputation and dropout masks.
+key coverage. A submission test checks that the example passes the initializer
+through Ray's runtime environment while preserving the existing runtime options.
+The language boundary in the CPU vision tests is a recording module, not MCore
+attention.
 
-The complete-encoder control retains diagnostic RoPE, attention and objective
-precision overrides. It does not establish equivalence for the unmodified
-example or PT retrieval quality. Multi-node execution, a complete public-path
-optimizer/resume comparison and Megatron→HF round trips remain unverified for
-this revision.
+This cleaned recipe has not been rerun through full GPU training/evaluation.
+Previous alignment scores used different data-order/RNG settings and must not
+be attributed to this configuration. Multi-node training and exact GPU
+checkpoint-resume behavior remain unverified for this revision.
 
-CPU 测试不替代 GPU 集成验证。已执行单机八卡受控加载及共享训练循环前后向；单层验证覆盖
-输出、输入及局部参数梯度、activation recompute 和 dropout mask。完整编码器控制仍保留
-诊断用精度覆盖，尚不能宣称原样运行本例或 PT 检索质量已对齐；多机、完整公共路径的优化器/
-恢复对比及 Megatron→HF 往返仍需验证。
+CPU 测试覆盖配对、共享训练/损失分派、Gloo 梯度、HF 视觉/位置编码与权重映射，
+以及 example 的初始化配置是否正确进入 Ray runtime env。语言模型的 CPU 测试使用
+记录边界，不能替代 MCore GPU 验证。本次清理版未重新跑完整 GPU 训练/评测；
+历史对齐分数使用不同的数据顺序/RNG 设置，不代表本配置的成绩。多机训练与 GPU
+精确断点续训仍需验证。历史精度实验的 checkpoint 请保留在原目录，不用于本例续训。

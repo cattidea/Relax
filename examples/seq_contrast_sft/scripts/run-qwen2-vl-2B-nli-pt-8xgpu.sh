@@ -18,6 +18,19 @@ if [ -z "${RELAX_ENTRYPOINT_MODE:-}" ]; then
 fi
 export RAY_NO_WAIT="${RAY_NO_WAIT-}"
 
+# Select Bridge's initializer for this example and pass it to Ray workers.
+export RELAX_LORA_A_INIT_METHOD="${RELAX_LORA_A_INIT_METHOD:-kaiming}"
+RUNTIME_ENV_JSON=$(python3 - <<'PYENV'
+import json
+import os
+
+runtime = json.loads(os.environ["RUNTIME_ENV_JSON"])
+runtime.setdefault("env_vars", {})["RELAX_LORA_A_INIT_METHOD"] = os.environ["RELAX_LORA_A_INIT_METHOD"]
+print(json.dumps(runtime))
+PYENV
+)
+export RUNTIME_ENV_JSON
+
 QWEN2_VL_VOCAB_SIZE=$(python3 - "${MODEL_DIR}/Qwen2-VL-2B-Instruct-emb/config.json" <<'PY'
 import json
 import sys
@@ -30,7 +43,8 @@ PY
 )
 source "${RELAX_ROOT}/scripts/models/qwen2-vl-2B.sh"
 PROJECT_NAME="${PROJECT_NAME:-Relax/sft/seq-contrast}"
-EXP_NAME="${EXP_NAME:-qwen2-vl-2b-nli-bridge-lora-dp8}"
+# Keep this standard TE/Kaiming recipe separate from older precision profiles.
+EXP_NAME="${EXP_NAME:-qwen2-vl-2b-nli-bridge-lora-kaiming-dp8}"
 now=$(date "+%Y%m%d-%H%M%S")
 
 CKPT_ARGS=(

@@ -114,9 +114,9 @@ def test_mappings_include_qkv_bias_and_gated_mlp_transforms():
     assert transforms["language_model.decoder.layers.*.mlp.linear_fc1.weight"][0] == "gated_mlp"
 
 
-def test_mappings_use_explicit_hf_compatible_norm_modules():
+def test_mappings_load_hf_norm_weights_into_standard_te_projections():
     targets = {name: target for _, name, target in configuration.parameter_mapping_specs("model", "visual")}
     prefix = "language_model.decoder.layers.*"
-    assert targets[f"{prefix}.input_layernorm.weight"] == "model.layers.*.input_layernorm.weight"
-    assert targets[f"{prefix}.pre_mlp_layernorm.weight"] == "model.layers.*.post_attention_layernorm.weight"
-    assert not any("layer_norm_weight" in name for name in targets)
+    assert targets[f"{prefix}.self_attention.linear_qkv.layer_norm_weight"] == "model.layers.*.input_layernorm.weight"
+    assert targets[f"{prefix}.mlp.linear_fc1.layer_norm_weight"] == "model.layers.*.post_attention_layernorm.weight"
+    assert targets["language_model.decoder.final_layernorm.weight"] == "model.norm.weight"

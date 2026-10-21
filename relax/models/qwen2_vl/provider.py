@@ -5,9 +5,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
-
-from relax.models.qwen2_vl.layer_specs import qwen2_vl_layer_spec
+from megatron.bridge.models.gpt_provider import GPTModelProvider, transformer_engine_layer_spec
 
 
 @dataclass
@@ -15,7 +13,7 @@ class Qwen2VLModelProvider(GPTModelProvider):
     position_embedding_type: str = "mrope"
     mrope_section: list[int] = field(default_factory=lambda: [16, 24, 24])
     scatter_embedding_sequence_parallel: bool = False
-    transformer_layer_spec: Any = qwen2_vl_layer_spec
+    transformer_layer_spec: Any = transformer_engine_layer_spec
     vision_config: Any = None
     image_token_id: int = 151655
     video_token_id: int = 151656

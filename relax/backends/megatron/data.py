@@ -648,8 +648,6 @@ def get_batch(
     else:
         raise ValueError(f"Unsupported qkv_format: {qkv_format}")
 
-    if packed_seq_params is not None and is_sequence_contrast_mode(get_args()):
-        packed_seq_params.retrieval_pair_sequence_lengths = tuple(t.numel() for t in batch["unconcat_tokens"])
     batch["tokens"] = tokens
     batch["packed_seq_params"] = packed_seq_params
 

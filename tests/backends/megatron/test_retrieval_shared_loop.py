@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Relax Authors. All Rights Reserved.
 
-"""Production iterator/loss dispatch with CPU boundary stubs for MCore only."""
+"""Production iterator/loss dispatch with CPU stubs for MCore and TQ
+transport."""
 
 from argparse import Namespace
 
@@ -13,6 +14,7 @@ from relax.utils.training.data_fields import build_data_fields
 from relax.utils.training.retrieval_utils import freeze_retrieval_unused_heads, validate_sequence_contrast_args
 from tests.backends.megatron.test_data_vpp import _load_data_module
 from tests.backends.megatron.test_rloo_policy_loss_dispatch import loss_module
+from tests.utils.data.test_streaming_tq_iterator import _load_stream_module
 
 
 def _args(**overrides):
@@ -148,7 +150,7 @@ def test_retrieval_freezes_unused_vocab_but_retains_language_transformer():
 
 def test_pair_postprocessing_reaches_existing_packed_batch(monkeypatch):
     data = _load_data_module(monkeypatch)
-    from relax.utils.data import stream_dataloader
+    stream_dataloader = _load_stream_module(monkeypatch)
 
     args = _args(global_batch_size=2)
     for name, value in {

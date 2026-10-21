@@ -752,10 +752,6 @@ def wrap_model_provider_with_lora(original_provider, args):
                     model, list(peft.target_modules), args.freeze_params_name_list
                 )
             model = peft(model, training=True)
-            if getattr(args, "task_type", None) == "seq_contrast":
-                from relax.models.qwen2_vl.peft import install_native_pair_lora
-
-                install_native_pair_lora(model)
             inherit_lora_tp_grad_sync(model)
             ensure_sequence_classification_head_trainable(model, args, "actor", post_process)
             gdn_gate_masked = install_gdn_gate_mask_hooks(model) if is_lora_adapter_mode(args) else 0

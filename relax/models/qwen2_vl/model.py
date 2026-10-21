@@ -3,7 +3,6 @@
 """Original HF Qwen2-VL vision tower with a Megatron language transformer."""
 
 import inspect
-from copy import copy
 from typing import Any
 
 import torch
@@ -127,15 +126,6 @@ class Qwen2VLModel(MegatronModule):
             decoder_input = decoder_input.transpose(0, 1).contiguous()
         if position_ids is None:
             position_ids = self._position_ids(input_ids, packed_seq_params, image_grid_thw, video_grid_thw)
-        if getattr(self, "_qwen2_vl_native_pair_lora", False):
-            from relax.models.qwen2_vl.peft import pair_projection_layout
-
-            if packed_seq_params is None:
-                raise ValueError("Qwen2-VL retrieval LoRA requires packed pair metadata")
-            packed_seq_params = copy(packed_seq_params)
-            packed_seq_params.qwen2_vl_projection_layout = pair_projection_layout(
-                packed_seq_params, input_ids.device, input_ids.shape[1]
-            )
         return self.language_model(
             input_ids=None,
             position_ids=position_ids,

@@ -59,6 +59,8 @@ def test_example_passes_initializer_and_preserves_ray_runtime(tmp_path, initiali
     }
     assert args[args.index("--custom-dataset-class") + 1] == "relax.engine.sft.dataset.retrieval.NLIPairDataset"
     assert "--data-parallel-random-init" in args
+    assert "--colocate" not in args
+    assert args[args.index("--sft-max-in-flight-steps") + 1] == "2"
     assert "--custom-megatron-before-train-step-hook-path" not in args
     assert "--use-tensorboard" not in args
     assert "--no-wait" not in args

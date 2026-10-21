@@ -105,7 +105,6 @@ PERF_ARGS=(
     --recompute-method uniform
     --recompute-num-layers 1
     --no-rope-fusion
-    --colocate
     --attention-dropout 0
     --hidden-dropout 0
     --accumulate-allreduce-grads-in-fp32
@@ -126,7 +125,7 @@ ray job submit ${RAY_NO_WAIT:+--no-wait} --address="${RAY_ADDRESS}" \
     --runtime-env-json="${RUNTIME_ENV_JSON}" \
     -- python3 -m relax.entrypoints.train \
     --resource '{"sft": [1, 0], "actor": [1, 8]}' \
-    --sft-max-in-flight-steps 1 --num-data-storage-units 8 \
+    --sft-max-in-flight-steps 2 --num-data-storage-units 8 \
     "${MODEL_ARGS[@]}" "${CKPT_ARGS[@]}" "${SFT_ARGS[@]}" "${LORA_ARGS[@]}" \
     "${OPTIMIZER_ARGS[@]}" "${PERF_ARGS[@]}" "${TRACKING_ARGS[@]}" "$@" \
     2>&1 | tee "${RUN_LOG_DIR}/${EXP_NAME}-${now}.log"

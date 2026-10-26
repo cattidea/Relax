@@ -14,7 +14,6 @@ import ray
 import requests
 import torch
 import torch.distributed as dist
-import transfer_queue as tq
 from megatron.core import mpu
 
 
@@ -45,7 +44,7 @@ from relax.engine.sft.runtime import (
     sft_tq_num_shards,
     should_run_sft_eval,
     should_run_sft_predict,
-    should_skip_mtp_only_weight_management,
+    should_skip_sft_weight_management,
 )
 from relax.utils import device as device_utils
 from relax.utils import tracking_utils
@@ -88,9 +87,11 @@ from relax.utils.replay import capture_hooks
 from relax.utils.rotate_ckpt import rotate_ckpt
 from relax.utils.s3_model_loader import prepare_model_maybe_update_args
 from relax.utils.timer import Timer, inverse_timer, timer, with_defer
+from relax.utils.tq.lifecycle import attach_tq_client, detach_tq_client
 from relax.utils.tracking_utils import init_tracking
 from relax.utils.training import train_dump_utils
 from relax.utils.training.data_fields import build_data_fields
+from relax.utils.training.inline_log_probs import can_reuse_colocate_log_probs
 from relax.utils.training.routing_replay import RoutingReplay
 from relax.utils.types import RolloutBatch
 from relax.utils.utils import (
@@ -363,6 +364,18 @@ class MegatronTrainRayActor(TrainRayActor):
         """
         return not is_offline_mode(self.args)
 
+    def __del__(self) -> None:
+        # Best-effort detach on graceful teardown; ray.kill / fate-sharing
+        # kills skip destructors, in which case the Mooncake master TTL
+        # reclaims the segment.
+        if getattr(self, "data_system_client", None) is None:
+            return
+        try:
+            detach_tq_client()
+            self.data_system_client = None
+        except Exception:  # destructor must never raise (interpreter shutdown)
+            return
+
     def init(
         self,
         args: Namespace,
@@ -399,8 +412,10 @@ class MegatronTrainRayActor(TrainRayActor):
         if repatch is not None:
             repatch(args)
         init(args)
-        tq.init(args.tq_config)
-        self.data_system_client = tq.get_client()
+        self.data_system_client = attach_tq_client(
+            args.tq_config,
+            role=role,
+        )
         self._sft_train_prefetch_executor: ThreadPoolExecutor | None = None
         self._sft_train_prefetch: Future[tuple[list, float]] | None = None
         self._sft_train_prefetch_rollout_id: int | None = None
@@ -505,10 +520,13 @@ class MegatronTrainRayActor(TrainRayActor):
 
         if self.args.vocab_size is None:
             self.args.vocab_size = self.tokenizer.vocab_size
+        if self.args.advantage_estimator == "score_centering":
+            text_config = getattr(self.hf_config, "text_config", self.hf_config)
+            self.args.score_centering_vocab_size = text_config.vocab_size
         # Hybrid mode uses the TensorBackuper path: actor handles ref/actor_fwd
         # internally via _switch_model and pushes weights to rollout via
         # UpdateWeightFromTensor instead of DCS.
-        skip_weight_management = should_skip_mtp_only_weight_management(
+        skip_weight_management = should_skip_sft_weight_management(
             self.args,
             with_ref=with_ref,
             with_opd_teacher=with_opd_teacher,
@@ -621,7 +639,7 @@ class MegatronTrainRayActor(TrainRayActor):
                 )
             )
         else:
-            logger.info("MTP-only SFT: skipping weight snapshots, rollout updater, and DCS client")
+            logger.info("Offline SFT: skipping weight snapshots, rollout updater, and DCS client")
         # empty cache after initialization
         clear_memory()
 
@@ -1962,6 +1980,12 @@ class MegatronTrainRayActor(TrainRayActor):
             data_iterator, num_microbatches = get_data_iterator(self.args, self.model, rollout_data)
         else:
             data_iterator, num_microbatches = prepared_data_iterator, prepared_num_microbatches
+        inline_old_log_probs = hasattr(self, "weights_backuper") and can_reuse_colocate_log_probs(
+            self.args,
+            num_microbatches,
+            backup_tags=self.weights_backuper.backup_tags,
+            rollout_data_postprocess=self.rollout_data_postprocess,
+        )
         # Create a separate iterator with a larger token budget for ref/teacher log-probs
         if (
             not is_offline_mode(self.args)
@@ -2028,7 +2052,11 @@ class MegatronTrainRayActor(TrainRayActor):
                     )
 
                 self._switch_model("old_actor" if self.args.keep_old_actor else "actor")
-                if not standard_dpo and (not self.args.use_rollout_logprobs or self.args.get_mismatch_metrics):
+                if (
+                    not standard_dpo
+                    and not inline_old_log_probs
+                    and (not self.args.use_rollout_logprobs or self.args.get_mismatch_metrics)
+                ):
                     if self.args.use_routing_replay:
                         if self.args.use_rollout_routing_replay:
                             os.environ["ROUTING_REPLAY_STAGE"] = "replay_forward"
@@ -2060,7 +2088,7 @@ class MegatronTrainRayActor(TrainRayActor):
                 # because we may need normalize the whole rollout.
                 capture_hooks.begin_rollout_for(self.args, rollout_id)
                 try:
-                    compute_advantages_and_returns(self.args, rollout_data)
+                    compute_advantages_and_returns(self.args, rollout_data, inline_log_probs=inline_old_log_probs)
                     capture_hooks.capture_rollout_advantage(rollout_data=rollout_data, args=self.args)
                 finally:
                     capture_hooks.end_rollout_for()
@@ -2494,6 +2522,8 @@ class MegatronTrainRayActor(TrainRayActor):
                     "group_index",
                 ]
                 data_fields += ["rollout_routed_experts"] if self.args.use_rollout_routing_replay else []
+                if self.args.advantage_estimator == "score_centering":
+                    data_fields.extend(["rollout_topk_token_ids", "rollout_topk_log_probs"])
                 if self.args.multimodal_keys is not None:
                     data_fields.append("multimodal_train_inputs")
                 if self.args.use_opd and self.args.opd_type == "sglang":
@@ -2682,6 +2712,8 @@ class MegatronTrainRayActor(TrainRayActor):
         ]
         # In true on-policy mode, actor_fwd is absent and old_log_probs is
         # recomputed inline from the train forward (see policy_loss_function).
+        if self.args.advantage_estimator == "score_centering":
+            data_fields.extend(["rollout_topk_token_ids", "rollout_topk_log_probs"])
         if not getattr(self.args, "true_on_policy_mode", False):
             data_fields.append("log_probs")
         if self.args.kl_coef != 0 or self.args.use_kl_loss:
@@ -2812,9 +2844,14 @@ class MegatronTrainRayActor(TrainRayActor):
             from megatron.training.async_utils import maybe_finalize_async_save
 
             maybe_finalize_async_save(blocking=True)
-
-        if self.args.async_save and dist.get_rank(group=get_gloo_group()) == 0:
-            rotate_ckpt(self.args, global_step=rollout_id)
+            if not self._is_standard_dpo() and dist.get_rank(group=get_gloo_group()) == 0:
+                # Only Megatron's successful finalizer advances this tracker.
+                tracker_path = os.path.join(self.args.save, "latest_checkpointed_iteration.txt")
+                if os.path.isfile(tracker_path):
+                    with open(tracker_path, encoding="utf-8") as tracker:
+                        completed_step = tracker.read().strip()
+                    if completed_step.isdigit() and int(completed_step) < rollout_id:
+                        rotate_ckpt(self.args, global_step=int(completed_step))
 
         dist.barrier(group=get_gloo_group())
 
@@ -2839,10 +2876,11 @@ class MegatronTrainRayActor(TrainRayActor):
             # the checkpoint before rank 0's identity sidecar is durable,
             # otherwise a concurrent resume could miss the file.
             dist.barrier(group=get_gloo_group())
-        # A synchronous save has committed before returning. Prune afterwards
-        # so max_actor_ckpt_to_keep includes the newly written checkpoint.
-        if not self.args.async_save and dist.get_rank(group=get_gloo_group()) == 0:
-            rotate_ckpt(self.args, global_step=rollout_id)
+        # Async saves commit at finalization, not when save() returns. Keep
+        # the previous recovery point until then, including DPO's sidecar.
+        if not self.args.async_save or force_sync or self._is_standard_dpo():
+            if dist.get_rank(group=get_gloo_group()) == 0:
+                rotate_ckpt(self.args, global_step=rollout_id)
 
         if self.args.save_hf is not None and self.role == "actor":
             from relax.backends.megatron.model import save_hf_model

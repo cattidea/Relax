@@ -123,7 +123,17 @@ class TestBuildLoraPeft:
         )
         assert build_lora_peft(args)["type"] == "canonical_lora"
         args.task_type = "causal_lm"
+        assert build_lora_peft(args)["type"] == "canonical_lora"
+        args.lora_target_modules = ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
         assert "type" not in build_lora_peft(args)
+
+    @pytest.mark.parametrize("target", ["linear_q", "language_model.*.linear_k", "linear_fc1_gate", "linear_fc1_up"])
+    def test_explicit_split_projection_uses_canonical_adapters(self, monkeypatch, target):
+        self._install_create_peft_stub(monkeypatch)
+        args = Namespace(
+            task_type="causal_lm", lora_rank=128, lora_alpha=256, lora_target_modules=[target], lora_dropout=0.05
+        )
+        assert build_lora_peft(args)["type"] == "canonical_lora"
 
 
 class TestConvertMegatronToHfTargetModules:

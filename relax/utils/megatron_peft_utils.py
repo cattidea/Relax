@@ -668,9 +668,12 @@ def build_lora_peft(args):
         "dropout": args.lora_dropout,
         "bias": "none",
     }
-    if getattr(args, "task_type", None) == "seq_contrast":
-        # Preserve the reference's independent Q/K/V and gate/up adapters.
-        # Other tasks retain Bridge's existing fused-LoRA default.
+    independent_targets = {"linear_q", "linear_k", "linear_v", "linear_fc1_gate", "linear_fc1_up"}
+    if getattr(args, "task_type", None) == "seq_contrast" or any(
+        target.rsplit(".", 1)[-1] in independent_targets for target in args.lora_target_modules
+    ):
+        # Explicit split projections need CanonicalLoRA for any task, including
+        # causal-LM reranking. Fused targets retain Bridge's LoRA default.
         peft_config["type"] = "canonical_lora"
     # Megatron-Bridge defaults to Xavier A initialization and one adapter
     # shared by all local experts.  Some external PEFT baselines use Kaiming

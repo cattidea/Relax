@@ -58,7 +58,9 @@ def main() -> None:
                 "pid": os.getpid(),
                 "model": str(args.model.resolve()),
                 "loader": "Qwen2VLForConditionalGeneration",
-                "loading_info": info,
+                "loading_info": {
+                    key: sorted(value) if isinstance(value, set) else value for key, value in info.items()
+                },
                 "dtype": "torch.bfloat16",
                 "torch": torch.__version__,
                 "transformers": transformers.__version__,

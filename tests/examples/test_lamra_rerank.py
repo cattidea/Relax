@@ -4,8 +4,11 @@
 coverage."""
 
 import copy
+import json
 import random
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -119,3 +122,67 @@ def test_reference_mask_keeps_assistant_header_and_masks_images():
     assert mask[16:].tolist() == [1] * 6
     with pytest.raises(ValueError, match="chat template"):
         reference_loss_mask(tokens[1:], 151644, 151643)
+
+
+@pytest.mark.parametrize("invalid_key", [None, "missing_keys", "unexpected_keys", "mismatched_keys", "error_msgs"])
+def test_evaluation_serializes_loading_sets_and_keeps_strict_checks(monkeypatch, tmp_path, invalid_key):
+    torch = pytest.importorskip("torch")
+    from examples.lamra_rerank.tools import evaluate
+
+    info = {"missing_keys": set(), "unexpected_keys": set(), "mismatched_keys": set(), "error_msgs": []}
+    if invalid_key is not None:
+        info[invalid_key] = {"decoder.weight"}
+
+    class Tokenizer:
+        def __call__(self, text, **kwargs):
+            return {"input_ids": [1 if text == "Yes" else 2]}
+
+    class Inputs(dict):
+        def to(self, device):
+            return self
+
+    class Processor:
+        tokenizer = Tokenizer()
+
+        def apply_chat_template(self, messages, **kwargs):
+            return "query"
+
+        def __call__(self, **kwargs):
+            return Inputs(input_ids=torch.tensor([[1]]))
+
+    model = SimpleNamespace(
+        to=lambda device: model,
+        eval=lambda: model,
+        generate=lambda **kwargs: SimpleNamespace(scores=[torch.tensor([[0.0, 1.0, 0.0]])]),
+    )
+    transformers = SimpleNamespace(
+        __version__="test",
+        AutoProcessor=SimpleNamespace(from_pretrained=lambda *args, **kwargs: Processor()),
+        Qwen2VLForConditionalGeneration=SimpleNamespace(from_pretrained=lambda *args, **kwargs: (model, info)),
+    )
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+    monkeypatch.setattr(torch.cuda, "set_device", lambda device: None)
+    for key, value in {"RANK": "0", "LOCAL_RANK": "0", "WORLD_SIZE": "1"}.items():
+        monkeypatch.setenv(key, value)
+    pairs = tmp_path / "pairs.jsonl"
+    pairs.write_text(json.dumps({"index": 0, "qid": "q", "did": "d", "messages": pointwise_messages({}, {})}) + "\n")
+    output = tmp_path / "scores"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["evaluate.py", "--model", str(tmp_path / "model"), "--pairs", str(pairs), "--output", str(output)],
+    )
+    if invalid_key is not None:
+        with pytest.raises(ValueError, match="Incomplete rank checkpoint load"):
+            evaluate.main()
+        assert not (output / "scores_rank0.jsonl").exists()
+        return
+
+    evaluate.main()
+    loading = json.loads((output / "loading_rank0.json").read_text())
+    assert loading["loading_info"] == {key: [] for key in info}
+    scores = json.loads((output / "scores_rank0.jsonl").read_text())
+    assert scores["qid"] == "q" and scores["did"] == "d"
+    assert scores["p_yes"] == pytest.approx(torch.sigmoid(torch.tensor(1.0)).item())
+    assert json.loads((output / "completion_rank0.json").read_text())["pairs"] == 1
+    assert isinstance(info["missing_keys"], set)

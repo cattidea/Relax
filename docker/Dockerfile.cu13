@@ -420,6 +420,8 @@ RUN --mount=type=bind,from=hybridep_builder,source=/opt/ep-wheels,target=/tmp/ep
 
 # Enable the EFA NCCL plugin only for 280G Blackwell; Hopper clusters may not have EFA.
 FROM relax_ep as relax_hopper
+# Use the prebuilt FA2/FA3 path for Hopper training instead of FA4's CuTe JIT.
+ENV NVTE_FLASH_ATTN_V4=0
 ENV LD_LIBRARY_PATH=/usr/local/cuda/compat:/opt/sglang/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}
 
 FROM relax_ep as relax_blackwell

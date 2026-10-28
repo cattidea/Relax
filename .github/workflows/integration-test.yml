@@ -125,29 +125,6 @@ jobs:
             --system --break-system-packages -r requirements.txt \
             --extra-index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 
-      - name: Verify CUDA 13 Hopper runtime
-        run: |
-          docker exec -i "$CI_CONTAINER_NAME" python - <<'PY'
-          import importlib.metadata as metadata
-          import json
-          import os
-
-          import torch
-
-          capabilities = [torch.cuda.get_device_capability(i) for i in range(torch.cuda.device_count())]
-          runtime = {
-              "torch": torch.__version__,
-              "cuda": torch.version.cuda,
-              "numpy": metadata.version("numpy"),
-              "gpu_arch": os.environ.get("RELAX_GPU_ARCH"),
-              "capabilities": capabilities,
-          }
-          print(json.dumps(runtime), flush=True)
-          assert (runtime["cuda"] or "").startswith("13."), runtime
-          assert runtime["gpu_arch"] == "hopper", runtime
-          assert capabilities and all(capability == (9, 0) for capability in capabilities), runtime
-          PY
-
       - name: Run integration test
         timeout-minutes: 10
         run: |

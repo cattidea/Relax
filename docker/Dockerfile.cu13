@@ -420,8 +420,13 @@ RUN --mount=type=bind,from=hybridep_builder,source=/opt/ep-wheels,target=/tmp/ep
 
 # Enable the EFA NCCL plugin only for 280G Blackwell; Hopper clusters may not have EFA.
 FROM relax_ep as relax_hopper
-# Use the prebuilt FA2/FA3 path for Hopper training instead of FA4's CuTe JIT.
-ENV NVTE_FLASH_ATTN_V4=0
+# Backport FA4's tensor-valued backward cache-key fix while keeping FA4 enabled.
+# Apply only to Hopper's stock wheel; Blackwell retains its separate pinned FA4 source.
+COPY docker/patch/flash-attention/4.0.0b19-stable-compile-key.patch /tmp/fa4-compile-key.patch
+RUN FA4_SITE="$(python -c 'import importlib.metadata as m; d = m.distribution("flash-attn-4"); assert d.version == "4.0.0b19", d.version; print(d.locate_file(""))')" && \
+    patch --batch --forward --fuzz=0 -d "$FA4_SITE" -p1 < /tmp/fa4-compile-key.patch && \
+    python -m compileall -q "$FA4_SITE/flash_attn/cute/interface.py" && \
+    rm /tmp/fa4-compile-key.patch
 ENV LD_LIBRARY_PATH=/usr/local/cuda/compat:/opt/sglang/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}
 
 FROM relax_ep as relax_blackwell

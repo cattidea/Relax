@@ -1,0 +1,45 @@
+Backport of Dao-AILab/flash-attention#2507 (merged as 2ee80234dcc234d4cdd2d4cdb9076701bbc8bf56).
+Keep tensor sequence lengths out of backward compile keys without device synchronization.
+Adapted to flash-attn-4 4.0.0b19; no kernel math or public API changes.
+
+--- a/flash_attn/cute/interface.py
++++ b/flash_attn/cute/interface.py
+@@ -1461,6 +1461,16 @@
+     if cluster_size == 2 and num_n_blocks % cluster_size != 0:
+         seqlen_k_rounded = seqlen_k_rounded + n_block_size
+ 
++    # The single-block specialization below only guards against TVM stride poisoning,
++    # which is a host-side branch predicate that selects a kernel variant. When
++    # max_seqlen is passed as a tensor (e.g. HF/TE varlen), seqlen_*_rounded are tensors,
++    # so `seqlen_*_rounded // block == 1` would leak a tensor into the compile key. Its
++    # pickle hash differs every call, forcing a recompile per step. Only specialize when
++    # the seqlen is already a host scalar; tensor callers fall back to the multi-block
++    # default, keeping the key stable with no device sync.
++    single_q_block = (not torch.is_tensor(seqlen_q_rounded)) and (seqlen_q_rounded // m_block_size == 1)
++    single_k_block = (not torch.is_tensor(seqlen_k_rounded)) and (seqlen_k_rounded // n_block_size == 1)
++
+     if cu_seqlens_k is None:
+         assert k.shape == (batch_size, seqlen_k, num_head_kv, head_dim)
+         assert v.shape == (batch_size, seqlen_k, num_head_kv, head_dim_v)
+@@ -1736,8 +1746,8 @@
+             get_broadcast_dims(v),
+             get_broadcast_dims(dout),
+             # Prevent TVM stride poisoning when only one block is present.
+-            (seqlen_q_rounded // m_block_size == 1),
+-            (seqlen_k_rounded // n_block_size == 1),
++            single_q_block,
++            single_k_block,
+         )
+     else:
+         compile_key = (
+@@ -1773,8 +1783,8 @@
+             get_broadcast_dims(v),
+             get_broadcast_dims(dout),
+             # Prevent TVM stride poisoning when only one block is present.
+-            (seqlen_q_rounded // m_block_size == 1),
+-            (seqlen_k_rounded // n_block_size == 1),
++            single_q_block,
++            single_k_block,
+         )
+ 
+     if compile_key not in _flash_attn_bwd.compile_cache:

@@ -420,15 +420,20 @@ RUN --mount=type=bind,from=hybridep_builder,source=/opt/ep-wheels,target=/tmp/ep
 
 # Enable the EFA NCCL plugin only for 280G Blackwell; Hopper clusters may not have EFA.
 FROM relax_ep as relax_hopper
-# Keep FA4 enabled with stable backward cache keys and consistent SM90 accumulator strides.
-# Apply only to Hopper's stock wheel; Blackwell retains its separate pinned FA4 source.
-COPY docker/patch/flash-attention/4.0.0b19-stable-compile-key.patch /tmp/fa4-compile-key.patch
-COPY docker/patch/flash-attention/4.0.0b19-sm90-backward-head-stride.patch /tmp/fa4-sm90-head-stride.patch
-RUN FA4_SITE="$(python -c 'import importlib.metadata as m; d = m.distribution("flash-attn-4"); assert d.version == "4.0.0b19", d.version; print(d.locate_file(""))')" && \
-    patch --batch --forward --fuzz=0 -d "$FA4_SITE" -p1 < /tmp/fa4-compile-key.patch && \
+# b37 includes the stable backward cache keys. Keep SM90 stride and TE varlen compatibility.
+# Upgrade only Hopper's public wheel; Blackwell retains its separate pinned FA4 source.
+COPY docker/patch/flash-attention/4.0.0b37-sm90-backward-head-stride.patch /tmp/fa4-sm90-head-stride.patch
+COPY docker/patch/flash-attention/4.0.0b37-sm90-tensor-seqlen.patch /tmp/fa4-tensor-seqlen.patch
+COPY docker/patch/transformer-engine/2.18.0-fa4-window-sentinel.patch /tmp/te-fa4-window.patch
+RUN pip install --no-cache-dir --no-deps "flash-attn-4==4.0.0b37" && \
+    FA4_SITE="$(python -c 'import importlib.metadata as m; d = m.distribution("flash-attn-4"); assert d.version == "4.0.0b37", d.version; print(d.locate_file(""))')" && \
+    TE_SITE="$(python -c 'import importlib.metadata as m; d = m.distribution("transformer-engine"); assert d.version == "2.18.0", d.version; print(d.locate_file(""))')" && \
     patch --batch --forward --fuzz=0 -d "$FA4_SITE" -p1 < /tmp/fa4-sm90-head-stride.patch && \
+    patch --batch --forward --fuzz=0 -d "$FA4_SITE" -p1 < /tmp/fa4-tensor-seqlen.patch && \
+    patch --batch --forward --fuzz=0 -d "$TE_SITE" -p1 < /tmp/te-fa4-window.patch && \
     python -m compileall -q "$FA4_SITE/flash_attn/cute/interface.py" "$FA4_SITE/flash_attn/cute/flash_bwd_sm90.py" && \
-    rm /tmp/fa4-compile-key.patch /tmp/fa4-sm90-head-stride.patch
+    python -m compileall -q "$TE_SITE/transformer_engine/pytorch/attention/dot_product_attention/backends.py" && \
+    rm /tmp/fa4-sm90-head-stride.patch /tmp/fa4-tensor-seqlen.patch /tmp/te-fa4-window.patch
 ENV LD_LIBRARY_PATH=/usr/local/cuda/compat:/opt/sglang/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}
 
 FROM relax_ep as relax_blackwell

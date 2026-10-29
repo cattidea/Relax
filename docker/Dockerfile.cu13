@@ -420,33 +420,22 @@ RUN --mount=type=bind,from=hybridep_builder,source=/opt/ep-wheels,target=/tmp/ep
 
 # Enable the EFA NCCL plugin only for 280G Blackwell; Hopper clusters may not have EFA.
 FROM relax_ep as relax_hopper
-# Retain the official FA4 wheel as an optional backend, without local FA4/TE workarounds.
-RUN pip install --no-cache-dir --no-deps "flash-attn-4==4.0.0b37"
-
 # Match the CUDA 12 FA3 source/API, rebuilt for this image's Torch/CUDA ABI.
-# TE prefers FA3 on SM90; FA4 remains available without changing Blackwell's runtime.
+# Keep both TE import paths on one module to avoid duplicate custom-op registration.
 ARG FA3_COMMIT=0f82fead0b2d59f6390c62a1d74e927159bc5a7b
-RUN git init /tmp/flash-attention-fa3 && cd /tmp/flash-attention-fa3 && \
-    git remote add origin https://github.com/Dao-AILab/flash-attention.git && \
-    git fetch --depth=1 origin "$FA3_COMMIT" && git checkout --detach FETCH_HEAD && \
-    test "$(git rev-parse HEAD)" = "$FA3_COMMIT" && \
+RUN git clone https://github.com/Dao-AILab/flash-attention.git /tmp/flash-attention-fa3 && \
+    cd /tmp/flash-attention-fa3 && git checkout "$FA3_COMMIT" && \
     git submodule update --init --depth=1 && \
     CUDA_VISIBLE_DEVICES="" FLASH_ATTENTION_FORCE_BUILD=TRUE FLASH_ATTENTION_DISABLE_SM80=TRUE \
-        MAX_JOBS=32 pip wheel --no-build-isolation --no-deps --wheel-dir /tmp/fa3-wheels ./hopper && \
-    pip install --no-cache-dir --no-deps /tmp/fa3-wheels/*.whl && \
-    FA3_SITE="$(python -c 'import importlib.metadata as m; print(m.distribution("flash-attn-3").locate_file(""))')" && \
+        MAX_JOBS=32 pip install --no-cache-dir --no-build-isolation --no-deps ./hopper && \
+    FA3_SITE="$(python -c 'import site; print(site.getsitepackages()[0])')" && \
     install -D -m 644 hopper/flash_attn_interface.py "$FA3_SITE/flash_attn_3/flash_attn_interface.py" && \
-    rm "$FA3_SITE/flash_attn_interface.py" && \
-    cd /root && python -c 'import importlib.util as u; assert u.find_spec("flash_attn_interface") is None; import flash_attn_config; import flash_attn_3.flash_attn_interface' && \
-    rm -rf /tmp/flash-attention-fa3 /tmp/fa3-wheels
-# TE 2.18 imports stable FA3 through the top-level name. Alias the same module so
-# either import order registers its torch custom ops only once.
-# TE itself loads the driver library, so validate it in GPU CI rather than docker build.
-RUN FA3_SITE="$(python -c 'import importlib.metadata as m; print(m.distribution("flash-attn-3").locate_file(""))')" && \
     printf '%s\n' 'import sys' 'from flash_attn_3 import flash_attn_interface as _implementation' \
         'sys.modules[__name__] = _implementation' > "$FA3_SITE/flash_attn_interface.py" && \
+    cd /root && \
     python -c 'import flash_attn_interface as top; from flash_attn_3 import flash_attn_interface as namespaced; assert top is namespaced' && \
-    python -c 'from flash_attn_3 import flash_attn_interface as namespaced; import flash_attn_interface as top; assert top is namespaced'
+    python -c 'from flash_attn_3 import flash_attn_interface as namespaced; import flash_attn_interface as top; assert top is namespaced' && \
+    rm -rf /tmp/flash-attention-fa3
 ENV LD_LIBRARY_PATH=/usr/local/cuda/compat:/opt/sglang/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}
 
 FROM relax_ep as relax_blackwell

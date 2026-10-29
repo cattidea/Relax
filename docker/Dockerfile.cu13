@@ -439,6 +439,13 @@ RUN git init /tmp/flash-attention-fa3 && cd /tmp/flash-attention-fa3 && \
     rm "$FA3_SITE/flash_attn_interface.py" && \
     cd /root && python -c 'import importlib.util as u; assert u.find_spec("flash_attn_interface") is None; import flash_attn_config; import flash_attn_3.flash_attn_interface' && \
     rm -rf /tmp/flash-attention-fa3 /tmp/fa3-wheels
+# TE 2.18 imports stable FA3 through the top-level name. Alias the same module so
+# either import order registers its torch custom ops only once.
+RUN FA3_SITE="$(python -c 'import importlib.metadata as m; print(m.distribution("flash-attn-3").locate_file(""))')" && \
+    printf '%s\n' 'import sys' 'from flash_attn_3 import flash_attn_interface as _implementation' \
+        'sys.modules[__name__] = _implementation' > "$FA3_SITE/flash_attn_interface.py" && \
+    python -c 'import flash_attn_interface as top; from flash_attn_3 import flash_attn_interface as namespaced; assert top is namespaced; from transformer_engine.pytorch.attention.dot_product_attention import backends; assert backends.flash_attn_func_v3 is namespaced.flash_attn_func' && \
+    python -c 'from flash_attn_3 import flash_attn_interface as namespaced; import flash_attn_interface as top; assert top is namespaced; from transformer_engine.pytorch.attention.dot_product_attention import backends; assert backends.flash_attn_func_v3 is namespaced.flash_attn_func'
 ENV LD_LIBRARY_PATH=/usr/local/cuda/compat:/opt/sglang/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}
 
 FROM relax_ep as relax_blackwell

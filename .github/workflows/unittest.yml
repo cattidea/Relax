@@ -29,25 +29,31 @@ jobs:
     needs: bypass
     # A failed gate must run the tests, never grant an exemption.
     if: ${{ !cancelled() && (needs.bypass.result != 'success' || needs.bypass.outputs.can-skip != 'true') }}
-    name: Unit Tests (H20, 4 GPUs)
-    runs-on: [self-hosted, linux, x64, h20, gpu]
-    # Allow time for image preparation, device acquisition, and the 30-minute test budget.
-    timeout-minutes: 190
+    strategy:
+      fail-fast: false
+      matrix:
+        host: ['01', '02']
+    name: CU12 duration control (${{ matrix.host }}, 4 GPUs)
+    runs-on: [self-hosted, linux, x64, 'ci-duration-${{ matrix.host }}']
+    timeout-minutes: 100
     env:
-      CI_CONTAINER_NAME: relax-unittest-${{ github.run_id }}-${{ github.run_attempt }}
+      CI_CONTAINER_NAME: relax-duration-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.host }}
+      CI_IMAGE: sha256:bb7be4d7b1543361e7b6354d16aab9550b1b7985ed0db9d390ee55493c75f93b
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          # Keep the tested source identical to the historical 24/29-minute comparison.
+          ref: ea3f0cee94b9400cfe1591beb4f2dbfe712d362c
 
-      - name: Prepare local test image
-        id: image
-        uses: ./.github/actions/prepare-image
-        timeout-minutes: 120
-        with:
-          # Include patch targets as well as the symlinks under patch/latest.
-          hash-key: ${{ hashFiles('docker/Dockerfile', '.dockerignore', 'requirements.txt', 'docker/patch/**', 'relax/backends/megatron/kernels/int4_qat/**', '.github/actions/prepare-image/action.yml') }}
+      - name: Verify immutable test image
+        run: |
+          set -euo pipefail
+          actual=$(docker image inspect --format '{{.Id}}' "$CI_IMAGE")
+          [[ "$actual" == "$CI_IMAGE" ]]
+          git rev-parse HEAD
+          echo "Frozen image: $actual"
 
       - name: Acquire test devices
         id: devices
@@ -55,17 +61,19 @@ jobs:
         timeout-minutes: 35
         with:
           backend: nvidia
-          count: 4
+          # Reserve all devices so other GPU jobs cannot overlap this measurement.
+          # The test container still sees the same four physical indices as the baseline.
+          count: 8
+          devices: 0,1,2,3,4,5,6,7
           timeout: 1800
 
       - name: Create test container
         env:
-          CI_IMAGE: ${{ steps.image.outputs.image-id }}
-          CI_DEVICES: ${{ steps.devices.outputs.devices }}
+          CI_DEVICES: 0,1,2,3
           HOST_UV_CACHE_DIR: /home/relax-ci/.cache/uv
           UV_CACHE_DIR: /uv-cache
           UV_LINK_MODE: copy
-          ARTIFACT_DIR: ${{ runner.temp }}/unittest-${{ github.run_id }}-${{ github.run_attempt }}
+          ARTIFACT_DIR: ${{ runner.temp }}/duration-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.host }}
         run: |
           set -euo pipefail
           mkdir -p "$HOST_UV_CACHE_DIR" "$ARTIFACT_DIR"
@@ -100,13 +108,20 @@ jobs:
         run: |
           docker exec "$CI_CONTAINER_NAME" uv pip install \
             --system --break-system-packages -r requirements.txt \
-            --extra-index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+            --extra-index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple \
+            cryptography==50.0.2 oauthlib==4.0.0 pyparsing==3.3.3
+
+      - name: Record measurement conditions
+        run: |
+          docker inspect --format 'Image={{.Image}} CpuQuota={{.HostConfig.CpuQuota}} CpuPeriod={{.HostConfig.CpuPeriod}} CpusetCpus={{.HostConfig.CpusetCpus}} Memory={{.HostConfig.Memory}}' "$CI_CONTAINER_NAME"
+          docker exec "$CI_CONTAINER_NAME" python -c 'import importlib.metadata as m, json, os; from pathlib import Path; packages = sorted((d.metadata["Name"], d.version) for d in m.distributions()); info = {"packages": packages, "affinity": sorted(os.sched_getaffinity(0)), "threads": {k: os.environ.get(k) for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")}}; Path("/artifacts/environment.json").write_text(json.dumps(info, indent=2)); print(json.dumps({k: v for k, v in info.items() if k != "packages"}))'
+          docker exec "$CI_CONTAINER_NAME" sha256sum /artifacts/environment.json
 
       - name: Run unittest
-        timeout-minutes: 30
+        timeout-minutes: 40
         run: |
           docker exec "$CI_CONTAINER_NAME" bash -euo pipefail -c '
-            python -m pytest tests/ -v -ra --tb=short --junitxml=/artifacts/junit.xml \
+            python -m pytest tests/ -v -ra --tb=short --durations=20 --junitxml=/artifacts/junit.xml \
               2>&1 | tee /artifacts/pytest.log
           '
 
@@ -121,7 +136,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: unittest-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/unittest-${{ github.run_id }}-${{ github.run_attempt }}/
+          name: duration-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.host }}
+          path: ${{ runner.temp }}/duration-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.host }}/
           if-no-files-found: warn
           retention-days: 14

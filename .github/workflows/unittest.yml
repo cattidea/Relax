@@ -127,6 +127,7 @@ jobs:
             while true; do
               date -u +%FT%TZ
               awk '/^cpu |^procs_running/ {print}' /proc/stat
+              awk '/^processor|^cpu MHz/ {print}' /proc/cpuinfo
               cat /proc/loadavg /proc/diskstats
               nvidia-smi --query-gpu=index,utilization.gpu,clocks.sm,power.draw --format=csv,noheader,nounits
               ps -eo comm | sort | uniq -c | awk '$2 ~ /^(nvcc|cc1plus|buildkitd)$/ {print}'

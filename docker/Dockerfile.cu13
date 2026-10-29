@@ -82,7 +82,7 @@ FROM base as train
 RUN python -c "import torch; assert torch.backends.cudnn.version() is not None"
 
 # FA2 is retained as a comparison backend. Build against this image's Torch/CUDA ABI.
-# Hopper-only FA3 is intentionally omitted from this 280G Blackwell-focused CUDA 13 image.
+# Hopper-only FA3 is built in relax_hopper below, outside the Blackwell stage chain.
 RUN . /etc/relax_build.env && FLASH_ATTENTION_FORCE_BUILD=TRUE MAX_JOBS=32 \
     pip -v install flash-attn==2.7.4.post1 --no-build-isolation --no-cache-dir && \
     pip install --no-cache-dir flash-linear-attention==0.4.1
@@ -420,20 +420,25 @@ RUN --mount=type=bind,from=hybridep_builder,source=/opt/ep-wheels,target=/tmp/ep
 
 # Enable the EFA NCCL plugin only for 280G Blackwell; Hopper clusters may not have EFA.
 FROM relax_ep as relax_hopper
-# b37 includes the stable backward cache keys. Keep SM90 stride and TE varlen compatibility.
-# Upgrade only Hopper's public wheel; Blackwell retains its separate pinned FA4 source.
-COPY docker/patch/flash-attention/4.0.0b37-sm90-backward-head-stride.patch /tmp/fa4-sm90-head-stride.patch
-COPY docker/patch/flash-attention/4.0.0b37-sm90-tensor-seqlen.patch /tmp/fa4-tensor-seqlen.patch
-COPY docker/patch/transformer-engine/2.18.0-fa4-window-sentinel.patch /tmp/te-fa4-window.patch
-RUN pip install --no-cache-dir --no-deps "flash-attn-4==4.0.0b37" && \
-    FA4_SITE="$(python -c 'import importlib.metadata as m; d = m.distribution("flash-attn-4"); assert d.version == "4.0.0b37", d.version; print(d.locate_file(""))')" && \
-    TE_SITE="$(python -c 'import importlib.metadata as m; d = m.distribution("transformer-engine"); assert d.version == "2.18.0", d.version; print(d.locate_file(""))')" && \
-    patch --batch --forward --fuzz=0 -d "$FA4_SITE" -p1 < /tmp/fa4-sm90-head-stride.patch && \
-    patch --batch --forward --fuzz=0 -d "$FA4_SITE" -p1 < /tmp/fa4-tensor-seqlen.patch && \
-    patch --batch --forward --fuzz=0 -d "$TE_SITE" -p1 < /tmp/te-fa4-window.patch && \
-    python -m compileall -q "$FA4_SITE/flash_attn/cute/interface.py" "$FA4_SITE/flash_attn/cute/flash_bwd_sm90.py" && \
-    python -m compileall -q "$TE_SITE/transformer_engine/pytorch/attention/dot_product_attention/backends.py" && \
-    rm /tmp/fa4-sm90-head-stride.patch /tmp/fa4-tensor-seqlen.patch /tmp/te-fa4-window.patch
+# Retain the official FA4 wheel as an optional backend, without local FA4/TE workarounds.
+RUN pip install --no-cache-dir --no-deps "flash-attn-4==4.0.0b37"
+
+# Match the CUDA 12 FA3 source/API, rebuilt for this image's Torch/CUDA ABI.
+# TE prefers FA3 on SM90; FA4 remains available without changing Blackwell's runtime.
+ARG FA3_COMMIT=0f82fead0b2d59f6390c62a1d74e927159bc5a7b
+RUN git init /tmp/flash-attention-fa3 && cd /tmp/flash-attention-fa3 && \
+    git remote add origin https://github.com/Dao-AILab/flash-attention.git && \
+    git fetch --depth=1 origin "$FA3_COMMIT" && git checkout --detach FETCH_HEAD && \
+    test "$(git rev-parse HEAD)" = "$FA3_COMMIT" && \
+    git submodule update --init --depth=1 && \
+    CUDA_VISIBLE_DEVICES="" FLASH_ATTENTION_FORCE_BUILD=TRUE FLASH_ATTENTION_DISABLE_SM80=TRUE \
+        MAX_JOBS=32 pip wheel --no-build-isolation --no-deps --wheel-dir /tmp/fa3-wheels ./hopper && \
+    pip install --no-cache-dir --no-deps /tmp/fa3-wheels/*.whl && \
+    FA3_SITE="$(python -c 'import importlib.metadata as m; print(m.distribution("flash-attn-3").locate_file(""))')" && \
+    install -D -m 644 hopper/flash_attn_interface.py "$FA3_SITE/flash_attn_3/flash_attn_interface.py" && \
+    rm "$FA3_SITE/flash_attn_interface.py" && \
+    cd /root && python -c 'import importlib.util as u; assert u.find_spec("flash_attn_interface") is None; import flash_attn_config; import flash_attn_3.flash_attn_interface' && \
+    rm -rf /tmp/flash-attention-fa3 /tmp/fa3-wheels
 ENV LD_LIBRARY_PATH=/usr/local/cuda/compat:/opt/sglang/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}
 
 FROM relax_ep as relax_blackwell

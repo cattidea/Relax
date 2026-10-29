@@ -69,7 +69,7 @@ jobs:
 
       - name: Create test container
         env:
-          CI_DEVICES: 0,1,2,3
+          CI_DEVICES: 4,5,6,7
           HOST_UV_CACHE_DIR: /home/relax-ci/.cache/uv
           UV_CACHE_DIR: /uv-cache
           UV_LINK_MODE: copy
@@ -119,7 +119,22 @@ jobs:
 
       - name: Run unittest
         timeout-minutes: 40
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/duration-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.host }}
         run: |
+          # Observe contention without importing test dependencies or changing clocks.
+          (
+            while true; do
+              date -u +%FT%TZ
+              awk '/^cpu |^procs_running/ {print}' /proc/stat
+              cat /proc/loadavg /proc/diskstats
+              nvidia-smi --query-gpu=index,utilization.gpu,clocks.sm,power.draw --format=csv,noheader,nounits
+              ps -eo comm | sort | uniq -c | awk '$2 ~ /^(nvcc|cc1plus|buildkitd)$/ {print}'
+              sleep 5
+            done
+          ) > "$ARTIFACT_DIR/host-samples.log" 2>&1 &
+          sampler_pid=$!
+          trap 'kill "$sampler_pid" 2>/dev/null || true; wait "$sampler_pid" 2>/dev/null || true' EXIT
           docker exec "$CI_CONTAINER_NAME" bash -euo pipefail -c '
             python -m pytest tests/ -v -ra --tb=short --durations=20 --junitxml=/artifacts/junit.xml \
               2>&1 | tee /artifacts/pytest.log

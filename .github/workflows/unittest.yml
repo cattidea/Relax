@@ -37,6 +37,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, 'ci-duration-${{ matrix.host }}']
     timeout-minutes: 100
     env:
+      CI_SOURCE_REF: ea3f0cee94b9400cfe1591beb4f2dbfe712d362c
       CI_CONTAINER_NAME: relax-duration-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.host }}
       CI_IMAGE: sha256:bb7be4d7b1543361e7b6354d16aab9550b1b7985ed0db9d390ee55493c75f93b
     steps:
@@ -45,14 +46,14 @@ jobs:
         with:
           persist-credentials: false
           # Keep the tested source identical to the historical 24/29-minute comparison.
-          ref: ea3f0cee94b9400cfe1591beb4f2dbfe712d362c
+          ref: ${{ env.CI_SOURCE_REF }}
 
       - name: Verify immutable test image
         run: |
           set -euo pipefail
           actual=$(docker image inspect --format '{{.Id}}' "$CI_IMAGE")
           [[ "$actual" == "$CI_IMAGE" ]]
-          git rev-parse HEAD
+          echo "Frozen source: $CI_SOURCE_REF"
           echo "Frozen image: $actual"
 
       - name: Acquire test devices

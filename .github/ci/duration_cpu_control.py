@@ -45,6 +45,49 @@ def frequency_khz(cpu: int) -> int | None:
         return None
 
 
+def read_optional(path: str) -> str | None:
+    try:
+        return Path(path).read_text().strip()
+    except OSError:
+        return None
+
+
+def process_status() -> dict[str, str]:
+    text = read_optional("/proc/self/status") or ""
+    prefixes = ("Speculation", "Seccomp", "NoNewPrivs", "Cpus_allowed_list")
+    return {
+        line.split(":", 1)[0]: line.split(":", 1)[1].strip()
+        for line in text.splitlines()
+        if ":" in line and line.startswith(prefixes)
+    }
+
+
+def sibling_cpus(cpu: int) -> set[int]:
+    text = read_optional(f"/sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list")
+    cpus = {cpu}
+    for interval in (text or "").split(","):
+        if not interval:
+            continue
+        first, _, last = interval.partition("-")
+        cpus.update(range(int(first), int(last or first) + 1))
+    return cpus
+
+
+def cpu_ticks(cpus: set[int]) -> dict[str, list[int]]:
+    names = {f"cpu{cpu}" for cpu in cpus}
+    lines = (read_optional("/proc/stat") or "").splitlines()
+    return {parts[0]: [int(v) for v in parts[1:]] for line in lines if (parts := line.split()) and parts[0] in names}
+
+
+def cpu_identity() -> dict[str, list[str]]:
+    fields = {name: set() for name in ("model name", "cpu family", "model", "stepping", "microcode")}
+    for line in (read_optional("/proc/cpuinfo") or "").splitlines():
+        name, separator, value = line.partition(":")
+        if separator and name.strip() in fields:
+            fields[name.strip()].add(value.strip())
+    return {name: sorted(values) for name, values in fields.items()}
+
+
 def main(output: Path) -> None:
     if not sys.flags.isolated or not sys.flags.no_site:
         raise RuntimeError("CPU control requires python -I -S")
@@ -67,6 +110,9 @@ def main(output: Path) -> None:
                 os.sched_setaffinity(0, {cpu})
                 if os.sched_getaffinity(0) != {cpu}:
                     raise RuntimeError("Failed to pin CPU control")
+                siblings = sibling_cpus(cpu)
+                status_before = process_status()
+                ticks_before = cpu_ticks(siblings)
                 frequency_before = frequency_khz(cpu)
                 usage_before = resource.getrusage(resource.RUSAGE_SELF)
                 timestamp = time.time_ns()
@@ -90,6 +136,9 @@ def main(output: Path) -> None:
                         "frequency_after_khz": frequency_khz(cpu),
                         "voluntary_switches": usage_after.ru_nvcsw - usage_before.ru_nvcsw,
                         "involuntary_switches": usage_after.ru_nivcsw - usage_before.ru_nivcsw,
+                        "container_process_status_before": status_before,
+                        "selected_and_sibling_ticks_before": ticks_before,
+                        "selected_and_sibling_ticks_after": cpu_ticks(siblings),
                     }
                 )
     finally:
@@ -102,9 +151,12 @@ def main(output: Path) -> None:
         "repeats": REPEATS,
         "warmup_iterations_per_core": 100_000,
         "python": sys.version,
+        "kernel": os.uname().release,
+        "cpu_identity_after_trials": cpu_identity(),
         "executable_sha256": hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest(),
         "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "selection": "median physical core per visible package, lowest allowed sibling, at most two packages",
+        "sibling_ticks_scope": "CPU-wide ticks during the workload, not task attribution or exclusive CPU ownership",
         "selected_cores": selected,
         "affinity_before": original_affinity,
         "affinity_restored": True,

@@ -29,19 +29,22 @@ jobs:
     needs: bypass
     # A failed gate must run the tests, never grant an exemption.
     if: ${{ !cancelled() && (needs.bypass.result != 'success' || needs.bypass.outputs.can-skip != 'true') }}
-    strategy:
-      fail-fast: false
-      matrix:
-        host: ['01', '02']
-    name: CU12 duration control (${{ matrix.host }}, 4 GPUs)
-    runs-on: [self-hosted, linux, x64, 'ci-duration-${{ matrix.host }}']
+    name: CU12 source ABBA (M01, 4 GPUs)
+    runs-on: [self-hosted, linux, x64, ci-duration-01]
     timeout-minutes: 100
     env:
-      CI_SOURCE_REF: ea3f0cee94b9400cfe1591beb4f2dbfe712d362c
+      CI_SOURCE_OLD: 13816f8692f087104b7222087af565b6dee5fbab
+      CI_SOURCE_NEW: ea3f0cee94b9400cfe1591beb4f2dbfe712d362c
+      CI_SOURCE_OLD_DIR: ${{ github.workspace }}/duration-source-A
+      CI_SOURCE_NEW_DIR: ${{ github.workspace }}/duration-source-B
       CI_HARNESS_REF: ${{ github.event.pull_request.head.sha || github.sha }}
-      CI_HARNESS_DIR: duration-harness-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.host }}
-      CI_CONTAINER_NAME: relax-duration-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.host }}
+      CI_HARNESS_DIR: duration-harness-${{ github.run_id }}-${{ github.run_attempt }}-01
+      CI_CONTAINER_PREFIX: relax-source-${{ github.run_id }}-${{ github.run_attempt }}-01
+      CI_ARTIFACT_ROOT: ${{ runner.temp }}/duration-source-${{ github.run_id }}-${{ github.run_attempt }}-01
+      CI_RUN_ID: ${{ github.run_id }}
+      CI_RUN_ATTEMPT: ${{ github.run_attempt }}
       CI_IMAGE: sha256:bb7be4d7b1543361e7b6354d16aab9550b1b7985ed0db9d390ee55493c75f93b
+      HOST_UV_CACHE_DIR: /home/relax-ci/.cache/uv
     steps:
       - name: Checkout diagnostic harness
         uses: actions/checkout@v7
@@ -53,22 +56,29 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/$CI_HARNESS_DIR"
-          cp .github/ci/duration_trace.py .github/ci/instrument_duration.py .github/ci/duration_cpu_control.py "$RUNNER_TEMP/$CI_HARNESS_DIR/"
+          cp .github/ci/duration_trace.py .github/ci/instrument_duration.py .github/ci/duration_cpu_control.py .github/ci/run_duration_source_control.sh "$RUNNER_TEMP/$CI_HARNESS_DIR/"
           echo "Diagnostic harness: $CI_HARNESS_REF"
 
-      - name: Checkout fixed test source
+      - name: Checkout old source A
         uses: actions/checkout@v7
         with:
           persist-credentials: false
-          # Keep the tested source identical to the historical 24/29-minute comparison.
-          ref: ${{ env.CI_SOURCE_REF }}
+          ref: ${{ env.CI_SOURCE_OLD }}
+          path: duration-source-A
+
+      - name: Checkout new source B
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ env.CI_SOURCE_NEW }}
+          path: duration-source-B
 
       - name: Verify immutable test image
         run: |
           set -euo pipefail
           actual=$(docker image inspect --format '{{.Id}}' "$CI_IMAGE")
           [[ "$actual" == "$CI_IMAGE" ]]
-          echo "Frozen source: $CI_SOURCE_REF"
+          echo "Source order: A=$CI_SOURCE_OLD B=$CI_SOURCE_NEW B A"
           echo "Frozen image: $actual"
 
       - name: Acquire test devices
@@ -83,116 +93,28 @@ jobs:
           devices: 0,1,2,3,4,5,6,7
           timeout: 1800
 
-      - name: Create test container
-        env:
-          CI_DEVICES: 4,5,6,7
-          HOST_UV_CACHE_DIR: /home/relax-ci/.cache/uv
-          UV_CACHE_DIR: /uv-cache
-          UV_LINK_MODE: copy
-          ARTIFACT_DIR: ${{ runner.temp }}/duration-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.host }}
+      - name: Run source comparison
+        timeout-minutes: 90
         run: |
           set -euo pipefail
-          mkdir -p "$HOST_UV_CACHE_DIR" "$ARTIFACT_DIR"
+          export CI_HARNESS_PATH="$RUNNER_TEMP/$CI_HARNESS_DIR"
+          bash "$CI_HARNESS_PATH/run_duration_source_control.sh"
 
-          # Keep network, IPC and /tmp private for parallel Ray/NCCL tests.
-          # Create before starting so cancellation during a pull cannot start tests.
-          docker create --pull never --rm --init \
-            --name "$CI_CONTAINER_NAME" \
-            --gpus "\"device=$CI_DEVICES\"" \
-            --shm-size=32g \
-            -v "$GITHUB_WORKSPACE:/source:ro" \
-            -v "$ARTIFACT_DIR:/artifacts" \
-            -v "$RUNNER_TEMP/$CI_HARNESS_DIR:/duration-harness:ro" \
-            -v "$HOST_UV_CACHE_DIR:$UV_CACHE_DIR" \
-            --workdir /workspace/Relax \
-            --env UV_CACHE_DIR \
-            --env UV_LINK_MODE \
-            --env http_proxy \
-            --env https_proxy \
-            --env no_proxy \
-            --entrypoint /bin/bash "$CI_IMAGE" -c 'sleep infinity'
-          docker inspect --format 'Test image: {{.Config.Image}} ({{.Image}})' "$CI_CONTAINER_NAME"
-          docker start "$CI_CONTAINER_NAME"
-
-      - name: Prepare workspace and show GPUs
-        run: |
-          docker exec "$CI_CONTAINER_NAME" bash -euc '
-            cp -a --no-preserve=ownership /source/. /workspace/Relax/
-            # Normalize Git versus REST metadata only in this private test copy.
-            if [[ -e .git || -L .git ]]; then
-              echo "Test copy Git metadata before normalization: present"
-            else
-              echo "Test copy Git metadata before normalization: absent"
-            fi
-            rm -rf -- .git
-            [[ ! -e .git && ! -L .git ]]
-            echo "Test copy Git metadata after normalization: absent"
-            nvidia-smi
-          '
-
-      - name: Install dependencies
-        run: |
-          docker exec "$CI_CONTAINER_NAME" uv pip install \
-            --system --break-system-packages -r requirements.txt \
-            --extra-index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple \
-            cryptography==50.0.2 oauthlib==4.0.0 pyparsing==3.3.3
-
-      - name: Instrument original diagnostic calls
-        run: |
-          docker exec --env CI_DURATION_TRACE_DIR=/artifacts "$CI_CONTAINER_NAME" \
-            python /duration-harness/instrument_duration.py /workspace/Relax
-
-      - name: Record measurement conditions
-        run: |
-          docker inspect --format 'Image={{.Image}} CpuQuota={{.HostConfig.CpuQuota}} CpuPeriod={{.HostConfig.CpuPeriod}} CpusetCpus={{.HostConfig.CpusetCpus}} Memory={{.HostConfig.Memory}}' "$CI_CONTAINER_NAME"
-          docker exec "$CI_CONTAINER_NAME" python -c 'import importlib.metadata as m, json, os; from pathlib import Path; packages = sorted((d.metadata["Name"], d.version) for d in m.distributions()); info = {"packages": packages, "affinity": sorted(os.sched_getaffinity(0)), "threads": {k: os.environ.get(k) for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")}}; Path("/artifacts/environment.json").write_text(json.dumps(info, indent=2)); print(json.dumps({k: v for k, v in info.items() if k != "packages"}))'
-          docker exec "$CI_CONTAINER_NAME" sha256sum /artifacts/environment.json
-
-      - name: Run unittest
-        timeout-minutes: 40
-        env:
-          ARTIFACT_DIR: ${{ runner.temp }}/duration-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.host }}
-        run: |
-          # Observe contention without importing test dependencies or changing clocks.
-          (
-            while true; do
-              date -u +%FT%TZ
-              awk '/^cpu |^procs_running/ {print}' /proc/stat
-              awk '/^processor|^cpu MHz/ {print}' /proc/cpuinfo
-              cat /proc/loadavg /proc/diskstats
-              nvidia-smi --query-gpu=index,utilization.gpu,clocks.sm,power.draw --format=csv,noheader,nounits
-              ps -eo comm | sort | uniq -c | awk '$2 ~ /^(nvcc|cc1plus|buildkitd)$/ {print}'
-              sleep 5
-            done
-          ) > "$ARTIFACT_DIR/host-samples.log" 2>&1 &
-          sampler_pid=$!
-          trap 'kill "$sampler_pid" 2>/dev/null || true; wait "$sampler_pid" 2>/dev/null || true' EXIT
-          # A separate isolated interpreter tests CPU throughput without Torch/CUDA.
-          docker exec "$CI_CONTAINER_NAME" python -I -S \
-            /duration-harness/duration_cpu_control.py /artifacts/cpu-control.json
-          docker exec --env CI_DURATION_TRACE_DIR=/artifacts "$CI_CONTAINER_NAME" bash -euo pipefail -c '
-            export PYTHONPATH="/duration-harness:$PWD${PYTHONPATH:+:$PYTHONPATH}"
-            # Keep the four diagnostic cases in their original full-suite order.
-            python -m pytest -p duration_trace -v -ra --tb=short --durations=20 --junitxml=/artifacts/junit.xml \
-              "tests/backends/fsdp/test_weight_transaction.py::test_non_src_serialization_failure_exits_all_ranks_without_hang" \
-              "tests/backends/megatron/test_gdn_cp_gpu.py::test_gdn_cp_layout_and_gradients[chunkwise]" \
-              "tests/backends/megatron/test_qsa_mixed.py::test_qsa_mixed_output_and_gradients[lengths1-8]" \
-              "tests/backends/megatron/test_qsa_mixed.py::test_qsa_mixed_output_and_gradients[lengths2-8]" \
-              2>&1 | tee /artifacts/pytest.log
-          '
-
-      - name: Remove test container
+      - name: Remove comparison containers
         if: always()
         run: |
-          if docker inspect "$CI_CONTAINER_NAME" >/dev/null 2>&1; then
-            docker rm --force "$CI_CONTAINER_NAME"
-          fi
+          for suffix in 01-A 02-B 03-B 04-A; do
+            name="$CI_CONTAINER_PREFIX-$suffix"
+            if docker inspect "$name" >/dev/null 2>&1; then
+              docker rm --force "$name"
+            fi
+          done
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: duration-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.host }}
-          path: ${{ runner.temp }}/duration-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.host }}/
+          name: duration-source-${{ github.run_id }}-${{ github.run_attempt }}-01
+          path: ${{ env.CI_ARTIFACT_ROOT }}/
           if-no-files-found: warn
           retention-days: 14

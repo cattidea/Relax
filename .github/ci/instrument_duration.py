@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Relax Authors. All Rights Reserved.
-"""Instrument only the container's frozen ea3f0cee test copies, fail closed.
+"""Instrument the container's allowlisted test copies, fail closed.
 
-Usage: python /duration-harness/instrument_duration.py /workspace/Relax
+Usage: python instrument_duration.py CHECKOUT_ROOT [SOURCE_REF]
 No test is imported/executed. All files are verified and compiled before any
 write. Projecting out the explicit warm replay must recover the original AST.
 """
@@ -21,6 +21,7 @@ from duration_trace import TARGET_NODES, WARM_NODES
 
 
 FROZEN_SOURCE = "ea3f0cee94b9400cfe1591beb4f2dbfe712d362c"
+ALLOWED_SOURCES = {FROZEN_SOURCE, "13816f8692f087104b7222087af565b6dee5fbab"}
 EXPECTED = {
     "tests/backends/fsdp/test_weight_transaction.py": "3fdc8cd86858df6a1d758531bb482575ceaa93515c6f9324d70d7be0ad9fd1bd",
     "tests/backends/megatron/test_qsa_mixed.py": "dfca1b1e8bbd7a9144c716016c26e85665ee8ce4a73881fcfd022f8c709912a8",
@@ -441,7 +442,9 @@ def verify_warm_replay(tree: ast.Module, expected_pairs: int) -> None:
         raise ValueError(f"Expected {expected_pairs} original/warm pairs, found {pairs}")
 
 
-def instrument(root: Path) -> dict[str, object]:
+def instrument(root: Path, source_ref: str = FROZEN_SOURCE) -> dict[str, object]:
+    if source_ref not in ALLOWED_SOURCES:
+        raise ValueError("Source ref is not an allowlisted comparison commit")
     root = root.resolve(strict=True)
     transformed: dict[Path, str] = {}
     evidence = []
@@ -469,7 +472,7 @@ def instrument(root: Path) -> dict[str, object]:
             }
         )
     manifest = {
-        "source_ref": FROZEN_SOURCE,
+        "source_ref": source_ref,
         "mode": "original_then_same_process_warm_no_extra_sync",
         "time_basis": "host_wall_no_added_cuda_synchronization",
         "ast_verification": "original_projection_matches_frozen_source_and_warm_body_equals_original",
@@ -497,6 +500,6 @@ def instrument(root: Path) -> dict[str, object]:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise SystemExit("Usage: instrument_duration.py CHECKOUT_ROOT")
-    instrument(Path(sys.argv[1]))
+    if len(sys.argv) not in (2, 3):
+        raise SystemExit("Usage: instrument_duration.py CHECKOUT_ROOT [SOURCE_REF]")
+    instrument(Path(sys.argv[1]), sys.argv[2] if len(sys.argv) == 3 else FROZEN_SOURCE)

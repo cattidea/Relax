@@ -40,7 +40,7 @@ jobs:
       CI_HARNESS_REF: ${{ github.event.pull_request.head.sha || github.sha }}
       CI_HARNESS_DIR: duration-harness-${{ github.run_id }}-${{ github.run_attempt }}-01
       CI_CONTAINER_PREFIX: relax-source-${{ github.run_id }}-${{ github.run_attempt }}-01
-      CI_ARTIFACT_ROOT: ${{ runner.temp }}/duration-source-${{ github.run_id }}-${{ github.run_attempt }}-01
+      CI_ARTIFACT_DIR: duration-source-${{ github.run_id }}-${{ github.run_attempt }}-01
       CI_RUN_ID: ${{ github.run_id }}
       CI_RUN_ATTEMPT: ${{ github.run_attempt }}
       CI_IMAGE: sha256:bb7be4d7b1543361e7b6354d16aab9550b1b7985ed0db9d390ee55493c75f93b
@@ -98,6 +98,7 @@ jobs:
         run: |
           set -euo pipefail
           export CI_HARNESS_PATH="$RUNNER_TEMP/$CI_HARNESS_DIR"
+          export CI_ARTIFACT_ROOT="$RUNNER_TEMP/$CI_ARTIFACT_DIR"
           bash "$CI_HARNESS_PATH/run_duration_source_control.sh"
 
       - name: Remove comparison containers
@@ -115,6 +116,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: duration-source-${{ github.run_id }}-${{ github.run_attempt }}-01
-          path: ${{ env.CI_ARTIFACT_ROOT }}/
+          path: ${{ runner.temp }}/${{ env.CI_ARTIFACT_DIR }}/
           if-no-files-found: warn
           retention-days: 14

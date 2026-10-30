@@ -53,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/$CI_HARNESS_DIR"
-          cp .github/ci/duration_trace.py .github/ci/instrument_duration.py "$RUNNER_TEMP/$CI_HARNESS_DIR/"
+          cp .github/ci/duration_trace.py .github/ci/instrument_duration.py .github/ci/duration_cpu_control.py "$RUNNER_TEMP/$CI_HARNESS_DIR/"
           echo "Diagnostic harness: $CI_HARNESS_REF"
 
       - name: Checkout fixed test source
@@ -167,6 +167,9 @@ jobs:
           ) > "$ARTIFACT_DIR/host-samples.log" 2>&1 &
           sampler_pid=$!
           trap 'kill "$sampler_pid" 2>/dev/null || true; wait "$sampler_pid" 2>/dev/null || true' EXIT
+          # A separate isolated interpreter tests CPU throughput without Torch/CUDA.
+          docker exec "$CI_CONTAINER_NAME" python -I -S \
+            /duration-harness/duration_cpu_control.py /artifacts/cpu-control.json
           docker exec --env CI_DURATION_TRACE_DIR=/artifacts "$CI_CONTAINER_NAME" bash -euo pipefail -c '
             export PYTHONPATH="/duration-harness:$PWD${PYTHONPATH:+:$PYTHONPATH}"
             # Keep the four diagnostic cases in their original full-suite order.

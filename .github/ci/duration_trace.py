@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import resource
 import sys
 import time
 from collections.abc import Callable, Generator
@@ -29,6 +30,57 @@ _COLLECTING = False
 _RANK: int | None = None
 _STACK: list[str] = []
 _ERRORS: dict[int, int] = {}
+
+
+def _trace_error(exc: Exception) -> None:
+    pid = os.getpid()
+    _ERRORS[pid] = _ERRORS.get(pid, 0) + 1
+    if _ERRORS[pid] == 1:
+        try:
+            sys.stderr.write(f"CI duration trace unavailable ({type(exc).__name__}); measurements are incomplete.\n")
+        except OSError:
+            pass
+
+
+def _cpu_snapshot() -> dict[str, Any] | None:
+    """Process CPU covers all its threads; CHILDREN covers waited-for
+    children."""
+    try:
+        usage = {}
+        for name, who in (("self", resource.RUSAGE_SELF), ("children", resource.RUSAGE_CHILDREN)):
+            value = resource.getrusage(who)
+            usage[name] = {
+                "utime_seconds": value.ru_utime,
+                "stime_seconds": value.ru_stime,
+                "nvcsw": value.ru_nvcsw,
+                "nivcsw": value.ru_nivcsw,
+                "minflt": value.ru_minflt,
+                "majflt": value.ru_majflt,
+            }
+        return {"process_time_ns": time.process_time_ns(), **usage}
+    except (OSError, ValueError) as exc:
+        _trace_error(exc)
+        return None
+
+
+def _cpu_delta(start: dict[str, Any] | None, end: dict[str, Any] | None) -> dict[str, Any]:
+    if start is None or end is None:
+        return {"cpu_measurement_available": False}
+    process_time_ns = end["process_time_ns"] - start["process_time_ns"]
+    usage = {
+        name: {key: end[name][key] - value for key, value in start[name].items()} for name in ("self", "children")
+    }
+    if process_time_ns < 0 or any(value < 0 for group in usage.values() for value in group.values()):
+        _trace_error(ValueError("Nonmonotonic CPU/resource counters"))
+        return {"cpu_measurement_available": False}
+    return {
+        "cpu_measurement_available": True,
+        "process_cpu_scope": "all_threads_in_this_process",
+        "process_time_ns_delta": process_time_ns,
+        "rusage_self_delta": usage["self"],
+        "rusage_children_scope": "reaped_children_only",
+        "rusage_children_delta": usage["children"],
+    }
 
 
 def _node(collection: bool = False) -> str | None:
@@ -59,14 +111,7 @@ def _emit(phase: str, event: str, *, nodeid: str, **fields: Any) -> None:
         with destination.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record, separators=(",", ":")) + "\n")
     except (OSError, TypeError, ValueError) as exc:
-        _ERRORS[pid] = _ERRORS.get(pid, 0) + 1
-        if _ERRORS[pid] == 1:
-            try:
-                sys.stderr.write(
-                    f"CI duration trace unavailable ({type(exc).__name__}); measurements are incomplete.\n"
-                )
-            except OSError:
-                pass
+        _trace_error(exc)
 
 
 def mark(phase: str, *, collection: bool = False, **fields: Any) -> None:
@@ -86,18 +131,21 @@ class _Span:
         self.phase = phase
         self.nodeid = _node(collection)
         self.started_ns = 0
+        self.started_cpu: dict[str, Any] | None = None
         self.parent_phase: str | None = None
 
     def __enter__(self) -> _Span:
         if self.nodeid is not None:
             self.parent_phase = _STACK[-1] if _STACK else None
             self.started_ns = time.perf_counter_ns()
+            self.started_cpu = _cpu_snapshot()
             _emit(self.phase, "begin", nodeid=self.nodeid, parent_phase=self.parent_phase)
             _STACK.append(self.phase)
         return self
 
     def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: Any) -> bool:
         if self.nodeid is not None:
+            cpu = _cpu_delta(self.started_cpu, _cpu_snapshot())
             elapsed_ns = time.perf_counter_ns() - self.started_ns
             _STACK.pop()
             _emit(
@@ -107,6 +155,7 @@ class _Span:
                 parent_phase=self.parent_phase,
                 elapsed_ns=elapsed_ns,
                 exception_type=exc_type.__name__ if exc_type is not None else None,
+                **cpu,
             )
         return False
 

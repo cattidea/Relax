@@ -160,7 +160,12 @@ jobs:
           trap 'kill "$sampler_pid" 2>/dev/null || true; wait "$sampler_pid" 2>/dev/null || true' EXIT
           docker exec --env CI_DURATION_TRACE_DIR=/artifacts "$CI_CONTAINER_NAME" bash -euo pipefail -c '
             export PYTHONPATH="/duration-harness${PYTHONPATH:+:$PYTHONPATH}"
-            python -m pytest -p duration_trace tests/ -v -ra --tb=short --durations=20 --junitxml=/artifacts/junit.xml \
+            # Keep the four diagnostic cases in their original full-suite order.
+            python -m pytest -p duration_trace -v -ra --tb=short --durations=20 --junitxml=/artifacts/junit.xml \
+              "tests/backends/fsdp/test_weight_transaction.py::test_non_src_serialization_failure_exits_all_ranks_without_hang" \
+              "tests/backends/megatron/test_gdn_cp_gpu.py::test_gdn_cp_layout_and_gradients[chunkwise]" \
+              "tests/backends/megatron/test_qsa_mixed.py::test_qsa_mixed_output_and_gradients[lengths1-8]" \
+              "tests/backends/megatron/test_qsa_mixed.py::test_qsa_mixed_output_and_gradients[lengths2-8]" \
               2>&1 | tee /artifacts/pytest.log
           '
 

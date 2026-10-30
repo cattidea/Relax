@@ -27,24 +27,19 @@ jobs:
 
   unittest:
     needs: bypass
-    # A failed gate must run the tests, never grant an exemption.
+    # A failed gate must run the diagnostic, never grant an exemption.
     if: ${{ !cancelled() && (needs.bypass.result != 'success' || needs.bypass.outputs.can-skip != 'true') }}
-    name: CU12 source ABBA (M01, 4 GPUs)
-    runs-on: [self-hosted, linux, x64, ci-duration-01]
-    timeout-minutes: 100
+    name: SSB CPU ABBA (M02, no GPU)
+    runs-on: [self-hosted, linux, x64, ci-duration-02]
+    timeout-minutes: 20
     env:
-      CI_SOURCE_OLD: 13816f8692f087104b7222087af565b6dee5fbab
-      CI_SOURCE_NEW: ea3f0cee94b9400cfe1591beb4f2dbfe712d362c
-      CI_SOURCE_OLD_DIR: ${{ github.workspace }}/duration-source-A
-      CI_SOURCE_NEW_DIR: ${{ github.workspace }}/duration-source-B
       CI_HARNESS_REF: ${{ github.event.pull_request.head.sha || github.sha }}
-      CI_HARNESS_DIR: duration-harness-${{ github.run_id }}-${{ github.run_attempt }}-01
-      CI_CONTAINER_PREFIX: relax-source-${{ github.run_id }}-${{ github.run_attempt }}-01
-      CI_ARTIFACT_DIR: duration-source-${{ github.run_id }}-${{ github.run_attempt }}-01
+      CI_HARNESS_DIR: ssb-harness-${{ github.run_id }}-${{ github.run_attempt }}-02
+      CI_CONTAINER: relax-ssb-${{ github.run_id }}-${{ github.run_attempt }}-02
+      CI_ARTIFACT_DIR: duration-ssb-${{ github.run_id }}-${{ github.run_attempt }}-02
       CI_RUN_ID: ${{ github.run_id }}
       CI_RUN_ATTEMPT: ${{ github.run_attempt }}
       CI_IMAGE: sha256:bb7be4d7b1543361e7b6354d16aab9550b1b7985ed0db9d390ee55493c75f93b
-      HOST_UV_CACHE_DIR: /home/relax-ci/.cache/uv
     steps:
       - name: Checkout diagnostic harness
         uses: actions/checkout@v7
@@ -52,70 +47,69 @@ jobs:
           persist-credentials: false
           ref: ${{ env.CI_HARNESS_REF }}
 
-      - name: Stage diagnostic harness
+      - name: Stage CPU diagnostic
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/$CI_HARNESS_DIR"
-          cp .github/ci/duration_trace.py .github/ci/instrument_duration.py .github/ci/duration_cpu_control.py .github/ci/run_duration_source_control.sh "$RUNNER_TEMP/$CI_HARNESS_DIR/"
+          cp .github/ci/duration_cpu_control.py .github/ci/duration_ssb_control.py "$RUNNER_TEMP/$CI_HARNESS_DIR/"
           echo "Diagnostic harness: $CI_HARNESS_REF"
 
-      - name: Checkout old source A
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          ref: ${{ env.CI_SOURCE_OLD }}
-          path: duration-source-A
-
-      - name: Checkout new source B
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          ref: ${{ env.CI_SOURCE_NEW }}
-          path: duration-source-B
-
-      - name: Verify immutable test image
+      - name: Run CPU SSB comparison
+        id: comparison
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           actual=$(docker image inspect --format '{{.Id}}' "$CI_IMAGE")
-          [[ "$actual" == "$CI_IMAGE" ]]
-          echo "Source order: A=$CI_SOURCE_OLD B=$CI_SOURCE_NEW B A"
-          echo "Frozen image: $actual"
-
-      - name: Acquire test devices
-        id: devices
-        uses: ./.github/actions/acquire-devices
-        timeout-minutes: 35
-        with:
-          backend: nvidia
-          # Reserve all devices so other GPU jobs cannot overlap this measurement.
-          # The test container still sees the same four physical indices as the baseline.
-          count: 8
-          devices: 0,1,2,3,4,5,6,7
-          timeout: 1800
-
-      - name: Run source comparison
-        timeout-minutes: 90
-        run: |
-          set -euo pipefail
-          export CI_HARNESS_PATH="$RUNNER_TEMP/$CI_HARNESS_DIR"
-          export CI_ARTIFACT_ROOT="$RUNNER_TEMP/$CI_ARTIFACT_DIR"
-          bash "$CI_HARNESS_PATH/run_duration_source_control.sh"
-
-      - name: Remove comparison containers
-        if: always()
-        run: |
-          for suffix in 01-A 02-B 03-B 04-A; do
-            name="$CI_CONTAINER_PREFIX-$suffix"
-            if docker inspect "$name" >/dev/null 2>&1; then
-              docker rm --force "$name"
+          [[ "$actual" == "$CI_IMAGE" ]] || { echo "Immutable image mismatch" >&2; exit 1; }
+          [[ "$CI_HARNESS_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid harness SHA" >&2; exit 1; }
+          artifacts="$RUNNER_TEMP/$CI_ARTIFACT_DIR"
+          if docker inspect "$CI_CONTAINER" >/dev/null 2>&1 || [[ -e "$artifacts" ]]; then
+            echo "Refusing to overwrite an existing CPU diagnostic" >&2
+            exit 1
+          fi
+          mkdir -p "$artifacts"
+          printf '{"mode":"same_container_CPU_SSB_ABBA","host":"M02","image":"%s","harness_ref":"%s","order":["01-A","02-B","03-B","04-A"],"A":"original_thread_state_unchanged","B":"calling_thread_PR_SPEC_DISABLE_only","gpu_work":false,"system_configuration_changed":false}\n' \
+            "$CI_IMAGE" "$CI_HARNESS_REF" > "$artifacts/comparison-plan.json"
+          docker image inspect --format '{{json .RootFS.Layers}}' "$CI_IMAGE" > "$artifacts/image-rootfs.json"
+          docker version --format '{{json .Server.Components}}' > "$artifacts/runtime-versions.json"
+          docker create --pull never --rm --init --runtime=runc --network=none \
+            --name "$CI_CONTAINER" --env NVIDIA_VISIBLE_DEVICES=void \
+            --env CI_HARNESS_REF --env CI_RUN_ID --env CI_RUN_ATTEMPT --env CI_IMAGE \
+            -v "$RUNNER_TEMP/$CI_HARNESS_DIR:/duration-harness:ro" \
+            -v "$artifacts:/artifacts" \
+            --entrypoint /bin/bash "$CI_IMAGE" -c 'sleep infinity'
+          cleanup() {
+            status=$?
+            trap - EXIT
+            if ! docker rm --force "$CI_CONTAINER" >/dev/null 2>&1; then
+              if (( status == 0 )); then status=1; fi
             fi
+            exit "$status"
+          }
+          trap cleanup EXIT
+          echo "container_created=true" >> "$GITHUB_OUTPUT"
+          docker inspect --format 'Image={{.Image}} Runtime={{.HostConfig.Runtime}} CpuQuota={{.HostConfig.CpuQuota}} CpuPeriod={{.HostConfig.CpuPeriod}} CpusetCpus={{.HostConfig.CpusetCpus}} Memory={{.HostConfig.Memory}} Network={{.HostConfig.NetworkMode}} Devices={{json .HostConfig.DeviceRequests}}' \
+            "$CI_CONTAINER" > "$artifacts/container-conditions.txt"
+          docker start "$CI_CONTAINER"
+          for trial in 01-A 02-B 03-B 04-A; do
+            echo "Starting CPU trial $trial"
+            docker exec --env CI_TRIAL="$trial" "$CI_CONTAINER" timeout --signal=TERM --kill-after=5s 60s \
+              python -I -S /duration-harness/duration_ssb_control.py "/artifacts/$trial.json" "${trial##*-}"
+            echo "Completed CPU trial $trial"
           done
+
+      - name: Remove CPU comparison container
+        if: ${{ always() && steps.comparison.outputs.container_created == 'true' }}
+        run: |
+          if docker inspect "$CI_CONTAINER" >/dev/null 2>&1; then
+            docker rm --force "$CI_CONTAINER"
+          fi
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: duration-source-${{ github.run_id }}-${{ github.run_attempt }}-01
+          name: duration-ssb-${{ github.run_id }}-${{ github.run_attempt }}-02
           path: ${{ runner.temp }}/${{ env.CI_ARTIFACT_DIR }}/
           if-no-files-found: warn
           retention-days: 14

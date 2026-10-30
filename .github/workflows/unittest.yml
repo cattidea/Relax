@@ -118,6 +118,15 @@ jobs:
         run: |
           docker exec "$CI_CONTAINER_NAME" bash -euc '
             cp -a --no-preserve=ownership /source/. /workspace/Relax/
+            # Normalize Git versus REST metadata only in this private test copy.
+            if [[ -e .git || -L .git ]]; then
+              echo "Test copy Git metadata before normalization: present"
+            else
+              echo "Test copy Git metadata before normalization: absent"
+            fi
+            rm -rf -- .git
+            [[ ! -e .git && ! -L .git ]]
+            echo "Test copy Git metadata after normalization: absent"
             nvidia-smi
           '
 

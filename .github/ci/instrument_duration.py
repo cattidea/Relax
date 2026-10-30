@@ -3,7 +3,7 @@
 
 Usage: python /duration-harness/instrument_duration.py /workspace/Relax
 No test is imported/executed. All files are verified and compiled before any
-write. Removing marker statements/contexts must reproduce the original AST.
+write. Projecting out the explicit warm replay must recover the original AST.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import textwrap
 from collections.abc import Callable
 from pathlib import Path
 
-from duration_trace import TARGET_NODES
+from duration_trace import TARGET_NODES, WARM_NODES
 
 
 FROZEN_SOURCE = "ea3f0cee94b9400cfe1591beb4f2dbfe712d362c"
@@ -69,6 +69,21 @@ def module(source: str, name: str) -> str:
         f'_ci_trace.mark("{name}.module_enter", collection=True)\n',
     )
     return wrap(source, "import torch\n", f"{name}.import_torch", collection=True)
+
+
+def original_and_warm(source: str, block: str, phase: str) -> str:
+    """Keep the first block, then repeat exactly that block after it
+    succeeds."""
+    first = block.splitlines()[0]
+    indent = first[: len(first) - len(first.lstrip())]
+    replacement = (
+        f'{indent}with _ci_trace.iteration("original", phase="{phase}"):\n'
+        + textwrap.indent(block, "    ")
+        + f"{indent}if _ci_trace.warm_enabled():\n"
+        + f'{indent}    with _ci_trace.iteration("warm", phase="{phase}"):\n'
+        + textwrap.indent(block, "        ")
+    )
+    return replace_once(source, block, replacement)
 
 
 def fsdp(source: str) -> str:
@@ -202,11 +217,14 @@ def qsa(source: str) -> str:
         "    )\n",
         "qsa.subprocess",
     )
-    return replace_once(
+    source = replace_once(
         source,
         'if __name__ == "__main__":\n',
         '_ci_trace.mark("qsa.module_ready", collection=True)\n\n'
         'if __name__ == "__main__":\n    _ci_trace.mark("qsa.child_main")\n',
+    )
+    return original_and_warm(
+        source, "        _run_case(tuple(json.loads(sys.argv[1])), int(sys.argv[2]))\n", "qsa.run_case"
     )
 
 
@@ -317,6 +335,11 @@ def gdn(source: str) -> str:
             "    finally:\n",
             "gdn.gradient_collectives_and_assertions",
         )
+        start = '        with _ci_trace.span("gdn.cp1_forward_backward"):\n'
+        stop = "    finally:\n"
+        if body.count(start) != 1 or body.count(stop) != 1:
+            raise ValueError("GDN original iteration boundary is not unique")
+        body = original_and_warm(body, body[body.index(start) : body.index(stop)], "gdn.compute")
         body = wrap(body, "        parallel_state.destroy_model_parallel()\n", "gdn.destroy_model_parallel")
         return wrap(body, "        dist.destroy_process_group()\n", "gdn.destroy_nccl")
 
@@ -349,7 +372,7 @@ def _trace_call(node: ast.AST, name: str) -> bool:
 
 
 class RemoveInstrumentation(ast.NodeTransformer):
-    """Prove the original statements/expressions remain in their old order."""
+    """Project the verified warm replay out; retain the original execution."""
 
     def visit_Import(self, node: ast.Import) -> ast.Import | None:
         if len(node.names) == 1 and node.names[0].name == "duration_trace" and node.names[0].asname == "_ci_trace":
@@ -362,9 +385,16 @@ class RemoveInstrumentation(ast.NodeTransformer):
         return self.generic_visit(node)
 
     def visit_With(self, node: ast.With) -> ast.With | list[ast.stmt]:
-        if len(node.items) == 1 and _trace_call(node.items[0].context_expr, "span"):
+        if len(node.items) == 1 and (
+            _trace_call(node.items[0].context_expr, "span") or _trace_call(node.items[0].context_expr, "iteration")
+        ):
             self.generic_visit(node)
             return node.body
+        return self.generic_visit(node)
+
+    def visit_If(self, node: ast.If) -> ast.If | None:
+        if _trace_call(node.test, "warm_enabled"):
+            return None
         return self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> ast.Call:
@@ -373,6 +403,42 @@ class RemoveInstrumentation(ast.NodeTransformer):
                 raise ValueError("Unexpected traced availability-call signature")
             return ast.Call(func=self.visit(node.args[1]), args=[], keywords=[])
         return self.generic_visit(node)
+
+
+def verify_warm_replay(tree: ast.Module, expected_pairs: int) -> None:
+    """Require each guarded warm body to equal its preceding original body."""
+    pairs = 0
+    for node in ast.walk(tree):
+        for value in vars(node).values():
+            if not isinstance(value, list):
+                continue
+            for index, statement in enumerate(value):
+                if not isinstance(statement, ast.If) or not _trace_call(statement.test, "warm_enabled"):
+                    continue
+                if index == 0 or statement.orelse or len(statement.body) != 1:
+                    raise ValueError("Unexpected warm replay guard")
+                original, warm = value[index - 1], statement.body[0]
+                for block, label in ((original, "original"), (warm, "warm")):
+                    if not isinstance(block, ast.With) or len(block.items) != 1:
+                        raise ValueError("Unexpected iteration block")
+                    context = block.items[0].context_expr
+                    if not _trace_call(context, "iteration") or len(context.args) != 1:
+                        raise ValueError("Unexpected iteration context")
+                    if not isinstance(context.args[0], ast.Constant) or context.args[0].value != label:
+                        raise ValueError("Wrong original/warm label")
+                    if len(context.keywords) != 1 or context.keywords[0].arg != "phase":
+                        raise ValueError("Missing explicit computation phase")
+                if ast.dump(original.items[0].context_expr.keywords[0].value) != ast.dump(
+                    warm.items[0].context_expr.keywords[0].value
+                ):
+                    raise ValueError("Original/warm phase names differ")
+                if ast.dump(ast.Module(body=original.body, type_ignores=[])) != ast.dump(
+                    ast.Module(body=warm.body, type_ignores=[])
+                ):
+                    raise ValueError("Warm replay differs from the verified original block")
+                pairs += 1
+    if pairs != expected_pairs:
+        raise ValueError(f"Expected {expected_pairs} original/warm pairs, found {pairs}")
 
 
 def instrument(root: Path) -> dict[str, object]:
@@ -389,6 +455,7 @@ def instrument(root: Path) -> dict[str, object]:
         source = original.decode("utf-8")
         result = transform(source)
         compiled = ast.parse(result, filename=relative)
+        verify_warm_replay(compiled, expected_pairs=int(transform is not fsdp))
         restored = RemoveInstrumentation().visit(ast.parse(result))
         if ast.dump(restored, include_attributes=False) != ast.dump(ast.parse(source), include_attributes=False):
             raise ValueError(f"Instrumentation altered the original AST: {relative}")
@@ -403,8 +470,15 @@ def instrument(root: Path) -> dict[str, object]:
         )
     manifest = {
         "source_ref": FROZEN_SOURCE,
-        "mode": "original_calls_no_extra_sync",
+        "mode": "original_then_same_process_warm_no_extra_sync",
         "time_basis": "host_wall_no_added_cuda_synchronization",
+        "ast_verification": "original_projection_matches_frozen_source_and_warm_body_equals_original",
+        "extra_computation": True,
+        "warm_nodes": WARM_NODES,
+        "iteration_labels": ["original", "warm"],
+        "compute_phases": ["qsa.run_case", "gdn.compute"],
+        "pytest_protocol_scope": "original_plus_warm_for_warm_nodes",
+        "compile_counters": "already_loaded_process_local_dynamo_inductor_integers_only",
         "nodes": TARGET_NODES,
         "files": evidence,
     }

@@ -14,6 +14,7 @@ import resource
 import sys
 import time
 from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -24,10 +25,12 @@ TARGET_NODES = (
     "tests/backends/megatron/test_qsa_mixed.py::test_qsa_mixed_output_and_gradients[lengths2-8]",
     "tests/backends/megatron/test_gdn_cp_gpu.py::test_gdn_cp_layout_and_gradients[chunkwise]",
 )
+WARM_NODES = (TARGET_NODES[2], TARGET_NODES[3])
 
 _T = TypeVar("_T")
 _COLLECTING = False
 _RANK: int | None = None
+_ITERATION: str | None = None
 _STACK: list[str] = []
 _ERRORS: dict[int, int] = {}
 
@@ -92,6 +95,36 @@ def _node(collection: bool = False) -> str | None:
     return "<collection>" if collection and _COLLECTING else None
 
 
+def warm_enabled() -> bool:
+    return _node() in WARM_NODES
+
+
+def _loaded_compile_counters() -> dict[str, Any]:
+    """Read existing integer counters only; never cause a lazy Torch import."""
+    result: dict[str, Any] = {"scope": "process_local_dynamo_inductor_only"}
+    try:
+        module = sys.modules.get("torch._dynamo.utils")
+        counters = vars(module).get("counters") if module is not None else None
+        result["dynamo"] = {"available": isinstance(counters, dict)}
+        if isinstance(counters, dict):
+            result["dynamo"]["counts"] = {
+                name: {
+                    key: value for key, value in tuple(group.items()) if isinstance(key, str) and type(value) is int
+                }
+                for name, group in tuple(counters.items())
+                if isinstance(name, str) and isinstance(group, dict)
+            }
+        module = sys.modules.get("torch._inductor.metrics")
+        generated = vars(module).get("generated_kernel_count") if module is not None else None
+        result["inductor"] = {"available": type(generated) is int}
+        if type(generated) is int:
+            result["inductor"]["generated_kernel_count"] = generated
+    except (TypeError, RuntimeError) as exc:
+        _trace_error(exc)
+        return {"available": False, "scope": result["scope"]}
+    return result
+
+
 def _emit(phase: str, event: str, *, nodeid: str, **fields: Any) -> None:
     """Logging failures must not replace an original test exception/result."""
     pid = os.getpid()
@@ -103,6 +136,7 @@ def _emit(phase: str, event: str, *, nodeid: str, **fields: Any) -> None:
             "ppid": os.getppid(),
             "nodeid": nodeid,
             "rank": _RANK,
+            "iteration": _ITERATION,
             "phase": phase,
             "event": event,
             **fields,
@@ -169,6 +203,27 @@ def call(phase: str, operation: Callable[[], _T], *, collection: bool = False) -
     laziness."""
     with span(phase, collection=collection):
         return operation()
+
+
+@contextmanager
+def iteration(label: str, *, phase: str = "iteration") -> Generator[None, None, None]:
+    """Label an original/warm computation; restore the label even on
+    failure."""
+    global _ITERATION
+    if _node() is None:
+        yield
+        return
+    previous = _ITERATION
+    _ITERATION = label
+    before = _loaded_compile_counters()
+    try:
+        with span(phase):
+            yield
+    finally:
+        try:
+            mark("compile_counters", before=before, after=_loaded_compile_counters())
+        finally:
+            _ITERATION = previous
 
 
 def pytest_configure(config: Any) -> None:

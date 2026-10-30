@@ -33,6 +33,7 @@ _RANK: int | None = None
 _ITERATION: str | None = None
 _STACK: list[str] = []
 _ERRORS: dict[int, int] = {}
+_SECURITY_PIDS: set[int] = set()
 
 
 def _trace_error(exc: Exception) -> None:
@@ -141,9 +142,17 @@ def _emit(phase: str, event: str, *, nodeid: str, **fields: Any) -> None:
             "event": event,
             **fields,
         }
+        if pid not in _SECURITY_PIDS:
+            prefixes = ("Speculation", "Seccomp", "NoNewPrivs", "Cpus_allowed_list")
+            record["process_security"] = {
+                line.split(":", 1)[0]: line.split(":", 1)[1].strip()
+                for line in Path("/proc/self/status").read_text().splitlines()
+                if ":" in line and line.startswith(prefixes)
+            }
         destination = Path(os.environ["CI_DURATION_TRACE_DIR"]) / f"phase-{pid}.jsonl"
         with destination.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record, separators=(",", ":")) + "\n")
+        _SECURITY_PIDS.add(pid)
     except (OSError, TypeError, ValueError) as exc:
         _trace_error(exc)
 

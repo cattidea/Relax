@@ -157,7 +157,7 @@ rollout 阶段按每条样本的 `data_source` 找到对应教师，请求 token
 Student 2P3D、TP4/PP5/CP8/EP32/ETP1、层数6/17/17/17/3、full/uniform/1重算。
 每个后续提交对应下表的一项功能；收益是历史实验观测，不是本次机器上的重新测量。
 
-当前入口默认：GBS160、mixed5（Decode Graph开、HiCache关）、6/14/14/14/12、full重算、256MiB同步buffer、Router阈值0。
+当前入口默认：GBS160、mixed5（Decode Graph开、HiCache关）、6/14/14/14/12、PP3 selective其余full、256MiB同步buffer、Router阈值0。
 
 ### 使用与数据
 
@@ -217,3 +217,4 @@ Mooncake的metacache关闭和20000–22000端口范围已由003 wrapper并入入
 | 06 | 7e8a5ae；013→014 | Router绝对阈值4→0，沿用相对阈值；R1/R2窗口rollout2040.41→1808.43秒（−11.37%），不是严格均分保证。 |
 | 07 | d0295fe；014→016 | 同微批GDN路由构造40→2次，跨层及重算复用；训练547.37→479.19秒（−12.46%）。保留旧Megatron补丁，需所有训练节点配套。 |
 | 08 | 6bff36f；016→017 | 保持来源配额/Teacher路由，提交前跨来源混排；rollout936.88→725.62秒（−22.55%），端到端48.70→56.12 tokens/s/GPU（+15.24%）。 |
+| 09 | 018；1f592b9拆分 | PP3 selective保留GDN/Attention等重算，去掉整块MoE重放；训练472.73→459.60秒（−2.78%），PP3显存采样43.98→61.37GiB。 |

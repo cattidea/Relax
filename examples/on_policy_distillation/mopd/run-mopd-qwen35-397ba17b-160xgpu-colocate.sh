@@ -3,7 +3,7 @@
 # 397B MOPD baseline: 20 nodes x 8 GPUs, train and inference share the GPU pool.
 # Rollout: Student 2P3D (5 x 16 GPUs) + five independent Teachers (5 x 16 GPUs).
 # Train: TP4 / PP5 / CP8 / EP32 / ETP1; layers 6/17/17/17/3, full recompute.
-# Defaults: GBS40, N=1, 10 rollouts; source weights 1:2:3:4:5.
+# Defaults: GBS160, N=1, 10 rollouts; source weights 1:2:3:4:5.
 # Set MODEL_DIR, DATA_DIR and MEGATRON; see README.md for the tested runtime.
 # Connect to the existing Ray cluster; do not start or clean up the cluster.
 
@@ -62,7 +62,7 @@ EXP_NAME="${EXP_NAME:-mopd-qwen35-397ba17b-160xgpu-pd2p3d-cp8-source-mixture}"
 now="$(date +%Y%m%d-%H%M%S)"
 LOG_DIR="${LOG_DIR:-${SCRIPT_DIR}/log/${EXP_NAME}-${now}}"
 NUM_ROLLOUT="${NUM_ROLLOUT:-10}"
-BATCH_SIZE="${BATCH_SIZE:-40}"
+BATCH_SIZE="${BATCH_SIZE:-160}"
 MM_PROCESSOR_POOL_SIZE="${MM_PROCESSOR_POOL_SIZE:-8}"
 CONTEXT_LEN=131072
 MAX_RESPONSE_LEN="${MAX_RESPONSE_LEN:-4096}"
@@ -297,7 +297,7 @@ MISC_ARGS=(
 
 # actor 与 rollout/teacher 共用一个160卡池，不能把160+80+80算作320张物理卡。
 # 八个 TQ storage units 分摊多图 batch 的接收内存，但不消除图片张量本身。
-# Start from the validated GBS40 baseline; larger batches need the later memory fixes.
+# PP0 pixel routing and host sharing were validated at GBS160 in experiment 008.
 python3 -m relax.entrypoints.train \
     --resource '{"actor":[1,160],"rollout":[1,80],"teacher":[1,80]}' \
     --rollout-num-gpus 80 \

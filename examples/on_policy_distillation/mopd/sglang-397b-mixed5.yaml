@@ -1,0 +1,20 @@
+# Copyright (c) 2026 Relax Authors. All Rights Reserved.
+# Student 专属配置：五个普通 P+D 引擎，各16卡，共80卡；没有跨服务 PD 传输。
+# 010对照实验：五个实例统一关闭 HiCache，保持 Decode CUDA Graph 开启。
+sglang:
+  - name: default
+    num_gpus_per_engine: 16
+    engine_groups:
+      - worker_type: regular
+        num_gpus: 80
+        overrides:
+          load_balance_method: total_tokens
+          # 关闭 L2 CPU cache，保留 GPU KV/前缀缓存；无 L3 后端。
+          # 下面的 ratio/write_policy 保留，重新开启 HiCache 后才生效。
+          enable_hierarchical_cache: false
+          hicache_ratio: 2
+          hicache_write_policy: write_through
+          # 沿用002已运行配置：五个实例均为 decode full Graph，Attention TP2 对齐bs2。
+          # Prefill Graph 由训练shell保持 disabled。
+          cuda_graph_backend_decode: full
+          cuda_graph_bs_decode: [2]

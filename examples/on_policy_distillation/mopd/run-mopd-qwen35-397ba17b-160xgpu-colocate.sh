@@ -1,7 +1,7 @@
 #!/bin/bash
 # Copyright (c) 2026 Relax Authors. All Rights Reserved.
 # 397B MOPD baseline: 20 nodes x 8 GPUs, train and inference share the GPU pool.
-# Rollout: Student 2P3D (5 x 16 GPUs) + five independent Teachers (5 x 16 GPUs).
+# Rollout: five mixed Student engines (5 x 16 GPUs) + five Teachers (5 x 16 GPUs).
 # Train: TP4 / PP5 / CP8 / EP32 / ETP1; layers 6/17/17/17/3, full recompute.
 # Defaults: GBS160, N=1, 10 rollouts; source weights 1:2:3:4:5.
 # Set MODEL_DIR, DATA_DIR and MEGATRON; see README.md for the tested runtime.
@@ -58,7 +58,7 @@ export RELAX_PROPAGATE_ENV_VARS="${RELAX_PROPAGATE_ENV_VARS:+${RELAX_PROPAGATE_E
 source "${MODEL_CONFIG_DIR}/qwen35-397B-A17B.sh"
 
 PROJECT_NAME="${PROJECT_NAME:-Relax/recipes/mopd}"
-EXP_NAME="${EXP_NAME:-mopd-qwen35-397ba17b-160xgpu-pd2p3d-cp8-source-mixture}"
+EXP_NAME="${EXP_NAME:-mopd-qwen35-397ba17b-160xgpu-mixed5-cp8-source-mixture}"
 now="$(date +%Y%m%d-%H%M%S)"
 LOG_DIR="${LOG_DIR:-${SCRIPT_DIR}/log/${EXP_NAME}-${now}}"
 NUM_ROLLOUT="${NUM_ROLLOUT:-10}"
@@ -96,7 +96,7 @@ export SOURCE_4_DATA="${SOURCE_4_DATA:-${DATA_DIR}/MOPD-397B-5teacher-128k/teach
 export SOURCE_5_DATA="${SOURCE_5_DATA:-${DATA_DIR}/MOPD-397B-5teacher-128k/teacher5.jsonl}"
 # 固定配置放在 recipe 中，可直接 review；启动不生成或覆盖 YAML。
 SOURCE_MIXTURE_CONFIG="${SOURCE_MIXTURE_CONFIG:-${SCRIPT_DIR}/source-mixture-397b-5teacher.yaml}"
-SGLANG_CONFIG="${SGLANG_CONFIG:-${SCRIPT_DIR}/sglang-397b-pd2p3d.yaml}"
+SGLANG_CONFIG="${SGLANG_CONFIG:-${SCRIPT_DIR}/sglang-397b-mixed5.yaml}"
 
 
 CKPT_ARGS=(
@@ -214,8 +214,9 @@ OPTIMIZER_ARGS=(
     --use-distributed-optimizer
     --accumulate-allreduce-grads-in-fp32
     --moe-router-load-balancing-type none
-    # 限制转换/同步权重的临时 bucket 为 128 MiB，减少主机峰值内存。
-    --update-weight-buffer-size 134217728
+    # 256 MiB buckets for training-to-Student weight synchronization (010 recipe).
+    # If temporary GPU memory is tight, reduce this value; no isolated speedup is claimed.
+    --update-weight-buffer-size 268435456
 )
 
 PERF_ARGS=(
@@ -246,7 +247,7 @@ PERF_ARGS=(
 
 SGLANG_ARGS=(
     --rollout-num-gpus-per-engine 16
-    # Student P/D roles and cache settings come from the YAML; Teachers are separate.
+    # Five mixed Student engines: Decode Graph enabled, HiCache disabled.
     --sglang-config "${SGLANG_CONFIG}"
     --sglang-ep-size 16
     --sglang-dp-size 8

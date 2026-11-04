@@ -240,6 +240,7 @@ PERF_ARGS=(
     # The hook matches 6/14/14/14/12; changing the layout requires a matching policy.
     --custom-megatron-init-path examples.on_policy_distillation.mopd.pp_recompute.configure
     --custom-megatron-before-train-step-hook-path examples.on_policy_distillation.mopd.pp_recompute.before_train_step
+    --response-only-lm-head
     --recompute-loss-function
     --log-probs-chunk-size 2048
     --calculate-per-token-loss

@@ -112,11 +112,11 @@ def get_responses(
     """
     qkv_format = args.qkv_format
 
-    # SFT chunked path (--sft-chunked-logits) feeds hidden_states (bf16) into
-    # this slicer — slicing itself is dtype-agnostic; that caller casts to fp32
-    # per sub-chunk. All other paths (RL, SFT legacy logits, SFT eval PPL)
-    # produce real fp32 logits and must stay strict.
-    if is_sft_mode(args) and getattr(args, "sft_chunked_logits", False):
+    # Deferred heads feed hidden states into this dtype-agnostic slicer and
+    # upcast the logits after projection. Ordinary logits remain fp32.
+    if (is_sft_mode(args) and getattr(args, "sft_chunked_logits", False)) or (
+        getattr(args, "loss_type", None) == "policy_loss" and getattr(args, "response_only_lm_head", False)
+    ):
         assert logits.dtype in (torch.float32, torch.bfloat16, torch.float16), f"{logits.dtype}"
     else:
         assert logits.dtype == torch.float32, f"{logits.dtype}"
@@ -370,12 +370,10 @@ def get_log_probs_and_entropy(
             student's rollout-time top-K stored in
             ``batch["student_topk_token_ids"]``.
         non_loss_data: Unused; kept for API compatibility.
-        lm_head_forward: If set, ``logits`` is actually hidden_states; we defer
-            the lm_head into this loss path and chunk the matmul at
-            ``args.sft_logits_chunk_size`` so the full ``[B, S, V/TP]`` logits
-            never materialize (SFT chunked path). Requires ``with_entropy=False``
-            and ``with_topk=False`` — chunked path has no full-vocab tensor to
-            derive entropy/top-k from.
+        lm_head_forward: If set, ``logits`` contains hidden states. Policy loss
+            projects only the response positions, preserving entropy; SFT
+            additionally chunks the projection at ``args.sft_logits_chunk_size``.
+            Deferred projection does not support top-k outputs.
 
     Returns:
         Tuple of:
@@ -389,10 +387,11 @@ def get_log_probs_and_entropy(
     assert non_loss_data
 
     validate_opd_topk_gather(args, gather_topk_token_ids)
+    chunked_sft = lm_head_forward is not None and is_sft_mode(args)
     if lm_head_forward is not None:
-        assert not with_entropy and not with_topk, (
-            "lm_head_forward chunked path doesn't materialize full vocab — entropy/topk unavailable."
-        )
+        assert not with_topk and gather_topk_token_ids is None, "Deferred lm_head does not support top-k outputs."
+    if chunked_sft:
+        assert not with_entropy, "Chunked SFT does not support entropy."
         sft_chunk_size = getattr(args, "sft_logits_chunk_size", 1024)
         if sft_chunk_size <= 0:
             sft_chunk_size = 1024
@@ -416,9 +415,10 @@ def get_log_probs_and_entropy(
             padded_total_lengths=padded_total_lengths,
             dynamic_cp_size=dynamic_cp_size,
             dynamic_cp_rank=dynamic_cp_rank,
+            apply_temperature=lm_head_forward is None,
         )
     ):
-        if lm_head_forward is not None:
+        if chunked_sft:
             # SFT chunked: logits_chunk is per-sample hidden_states [R, H].
             # Run lm_head per sub-chunk so the full [R, V/TP] logits tensor
             # never materializes; concat per-sub-chunk log_probs back into the
@@ -448,6 +448,16 @@ def get_log_probs_and_entropy(
             )
             entropy = None
         else:
+            if lm_head_forward is not None:
+                # Slice before the large vocab projection. Empty CP shards skip
+                # the head; policy_loss_function retains their decoder autograd
+                # anchor, and non-overlapped DDP reduces their zero main_grad.
+                if logits_chunk.size(0):
+                    logits_chunk, _ = lm_head_forward(logits_chunk.unsqueeze(1))
+                    logits_chunk = logits_chunk.squeeze(1)
+                logits_chunk = logits_chunk.float()
+                if args.rollout_temperature != 1.0:
+                    logits_chunk = logits_chunk / args.rollout_temperature
             log_prob, entropy = calculate_log_probs_and_entropy(
                 logits_chunk,
                 tokens_chunk,
@@ -832,6 +842,8 @@ def policy_loss_function(
     batch: RolloutBatch,
     logits: torch.Tensor,
     sum_of_sample_mean: Callable[[torch.Tensor], torch.Tensor],
+    *,
+    lm_head_forward: Callable[..., tuple[torch.Tensor, torch.Tensor | None]] | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Compute policy loss (PPO/GSPO/SAPO) and metrics.
 
@@ -847,8 +859,9 @@ def policy_loss_function(
         batch: Mini-batch containing "advantages", "log_probs" (old policy),
             "unconcat_tokens", "response_lengths", "total_lengths", "loss_masks",
             and optionally "ref_log_probs" and "rollout_log_probs".
-        logits: Policy logits with shape `[1, T, V]`.
+        logits: Policy logits `[1, T, V]`, or hidden states when deferring the head.
         sum_of_sample_mean: Reduction function that averages per-sample values.
+        lm_head_forward: Optional original head, called after selecting response positions.
 
     Returns:
         Tuple of `(loss, metrics)` where `loss` is a scalar tensor and `metrics`
@@ -896,6 +909,7 @@ def policy_loss_function(
         padded_total_lengths=padded_total_lengths,
         dynamic_cp_size=batch.get("dynamic_cp_size", None),
         dynamic_cp_rank=batch.get("dynamic_cp_rank", None),
+        lm_head_forward=lm_head_forward,
     )
 
     log_probs = log_probs_and_entropy["log_probs"]
@@ -1563,13 +1577,13 @@ def loss_function(
         batch: Mini-batch with "loss_masks", "response_lengths", and other
             keys required by the selected loss function.
         num_microbatches: Number of gradient accumulation steps.
-        logits: Model outputs (policy or value head). For SFT chunked path,
+        logits: Model outputs (policy or value head). For a deferred head,
             this is actually hidden_states `[B, S, H]` (model() bypassed the
             output_layer); ``lm_head_forward`` must be supplied so the loss
-            function can run lm_head per sub-chunk.
+            function can project the selected response hidden states.
         lm_head_forward: Captured original output_layer.forward callable from
-            ``_bypass_output_layer``; only meaningful when SFT chunked path is
-            active. Forward_step always partials this in (None when not chunked).
+            ``_bypass_output_layer``; used by chunked SFT or response-only policy loss.
+            Forward_step always partials this in (None for a normal forward).
 
     Returns:
         Tuple of `(scaled_loss, normalizer, logging_dict)` where:
@@ -1618,6 +1632,9 @@ def loss_function(
         match args.loss_type:
             case "policy_loss":
                 func = policy_loss_function
+                if getattr(args, "response_only_lm_head", False):
+                    assert lm_head_forward is not None, "Response-only lm_head was not captured on the loss stage."
+                    func = partial(func, lm_head_forward=lm_head_forward)
             case "value_loss":
                 func = value_loss_function
             case "dpo":

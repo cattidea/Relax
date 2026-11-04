@@ -157,7 +157,7 @@ rollout 阶段按每条样本的 `data_source` 找到对应教师，请求 token
 Student 2P3D、TP4/PP5/CP8/EP32/ETP1、层数6/17/17/17/3、full/uniform/1重算。
 每个后续提交对应下表的一项功能；收益是历史实验观测，不是本次机器上的重新测量。
 
-当前入口默认：GBS160、mixed5（Decode Graph开、HiCache关）、6/14/14/14/12、PP3 selective其余full、256MiB同步buffer、Router阈值0。
+当前入口默认：GBS160、mixed5（Decode Graph开、HiCache关）、6/14/14/14/12、PP3 selective其余full、response-only head、256MiB同步buffer、Router阈值0。
 
 ### 使用与数据
 
@@ -220,3 +220,4 @@ Mooncake的metacache关闭和20000–22000端口范围已由003 wrapper并入入
 | 09 | 018；1f592b9拆分 | PP3 selective保留GDN/Attention等重算，去掉整块MoE重放；训练472.73→459.60秒（−2.78%），PP3显存采样43.98→61.37GiB。 |
 | 10 | aa61fbf；019 | 删除TP1–3随后被真实TP广播覆盖的CP假广播；真实多进程数据回归及019通过，MM广播51.12→51.48秒，没有明确墙钟提速。 |
 | 11 | f0b6e82；019 | 复用Student/Teacher同源图片加载、PNG/base64结果；4图编码8→4次，get_samples33.15→14.95秒（−54.90%）；不是模型视觉编码复用。 |
+| 12 | c1d4e9f；019→021 | response-only lm_head：PP4 allocated31.63→22.94GiB（−8.69GiB），head局部kernel−90.62%，训练仅−0.41%；真实TP/fused梯度等价仍待专项验收。 |

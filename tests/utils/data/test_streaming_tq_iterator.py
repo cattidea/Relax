@@ -648,14 +648,28 @@ def test_get_data_keeps_qwen_pixels_on_first_stage(monkeypatch, model_type, over
     assert config_reads == ([0] if not overrides and broadcast_pp else [])
 
 
-@pytest.mark.parametrize(("pp_size", "first_stage_pixels"), [(1, True), (5, True), (5, False)])
-def test_multimodal_broadcast_collective_members_and_metadata(monkeypatch, pp_size, first_stage_pixels):
+@pytest.mark.parametrize(
+    ("pp_size", "first_stage_pixels", "broadcast_pp", "tp_size", "cp_size"),
+    [
+        (1, True, True, 2, 2),
+        (5, True, True, 4, 2),
+        (5, False, True, 2, 2),
+        (2, False, False, 4, 2),
+        (2, False, False, 1, 2),
+        (2, False, False, 2, 1),
+        (1, True, True, 1, 1),
+    ],
+)
+def test_multimodal_broadcast_collective_members_and_metadata(
+    monkeypatch, pp_size, first_stage_pixels, broadcast_pp, tp_size, cp_size
+):
     """Exercise production CP/TP/PP routing on CPU; the transport is
     recorded."""
     from collections import defaultdict
 
     stream_module = _load_stream_module(monkeypatch)
     coordinates = [0, 0, 0]  # PP, TP, CP
+    sizes = (pp_size, tp_size, cp_size)
     for index, axis in enumerate(("pipeline_model", "tensor_model", "context")):
         monkeypatch.setattr(
             stream_module.mpu, f"get_{axis}_parallel_rank", lambda index=index: coordinates[index], raising=False
@@ -663,7 +677,7 @@ def test_multimodal_broadcast_collective_members_and_metadata(monkeypatch, pp_si
         monkeypatch.setattr(
             stream_module.mpu,
             f"get_{axis}_parallel_world_size",
-            lambda index=index: pp_size if index == 0 else 2,
+            lambda index=index: sizes[index],
             raising=False,
         )
         monkeypatch.setattr(
@@ -679,7 +693,7 @@ def test_multimodal_broadcast_collective_members_and_metadata(monkeypatch, pp_si
     monkeypatch.setattr(
         stream_module, "_shared_pixel_buffer", lambda size, _group: (torch.empty(size, dtype=torch.uint8), True)
     )
-    monkeypatch.setattr(stream_module.dist, "get_world_size", lambda group: 4)
+    monkeypatch.setattr(stream_module.dist, "get_world_size", lambda group: tp_size * cp_size)
     monkeypatch.setattr(stream_module.dist, "broadcast_object_list", lambda *_args, **_kwargs: None)
 
     def gather_errors(errors, error, **_kwargs):
@@ -691,13 +705,13 @@ def test_multimodal_broadcast_collective_members_and_metadata(monkeypatch, pp_si
         axis, others = group
         member = list(others)
         member.insert(axis, local_rank)
-        return member[0] * 4 + member[1] * 2 + member[2]
+        return (member[0] * tp_size + member[1]) * cp_size + member[2]
 
     monkeypatch.setattr(stream_module.dist, "get_global_rank", group_member)
     wire, traces = {}, defaultdict(list)
 
     def broadcast(tensor, src, group):
-        rank = coordinates[0] * 4 + coordinates[1] * 2 + coordinates[2]
+        rank = (coordinates[0] * tp_size + coordinates[1]) * cp_size + coordinates[2]
         calls = traces[(group, rank)]
         key = (group, len(calls))
         calls.append((tuple(tensor.shape), tensor.dtype))
@@ -715,18 +729,22 @@ def test_multimodal_broadcast_collective_members_and_metadata(monkeypatch, pp_si
         "input_features": torch.full((3, 7), 2.0),
         "video_second_per_grid": [0.12345, 1.23456],
     }
-    spec, tensors = stream_module._encode_multimodal_inputs([sample, None])
     for pp in range(pp_size):
-        for tp in range(2):
-            for cp in range(2):
+        if not broadcast_pp:
+            # Fully async stages fetch independently; their CP peers must
+            # receive this stage's source, not PP0's source.
+            sample["pixel_values"] = torch.arange(8, dtype=torch.bfloat16).reshape(2, 4) + pp
+        spec, tensors = stream_module._encode_multimodal_inputs([sample, None])
+        for tp in range(tp_size):
+            for cp in range(cp_size):
                 coordinates[:] = [pp, tp, cp]
-                is_src = coordinates == [0, 0, 0]
+                is_src = tp == cp == 0 and (pp == 0 or not broadcast_pp)
                 result = stream_module._broadcast_multimodal_inputs(
                     spec,
                     tensors if is_src else [],
                     is_src,
                     torch.device("cpu"),
-                    True,
+                    broadcast_pp,
                     first_stage_pixels=first_stage_pixels,
                 )
                 assert result[1] is None
@@ -747,12 +765,80 @@ def test_multimodal_broadcast_collective_members_and_metadata(monkeypatch, pp_si
                     }
 
     for group, _rank in traces:
+        if group[0] == 2:
+            assert group[1][1] == 0, "Non-TP0 CP groups only broadcast overwritten placeholders"
+        if group[0] == 0:
+            assert broadcast_pp
         expected = traces[(group, group_member(group, 0))]
-        for local_rank in range(pp_size if group[0] == 0 else 2):
+        for local_rank in range(sizes[group[0]]):
             assert traces[(group, group_member(group, local_rank))] == expected
         if first_stage_pixels and (group[0] == 0 or group[1][0] != 0):
             # Neither PP collectives nor CP/TP groups outside PP0 carry pixels.
             assert expected == [((1, 3), torch.int64), ((2, 3), torch.int64), ((3, 7), torch.float32)]
+
+
+def _known_tensor_broadcast_worker(rank, rendezvous):
+    import torch.distributed as dist
+
+    torch.set_num_threads(1)
+    timeout = timedelta(seconds=90)
+    dist.init_process_group("gloo", init_method=f"file://{rendezvous}", rank=rank, world_size=8, timeout=timeout)
+    try:
+        coordinates = (rank // 4, rank // 2 % 2, rank % 2)  # PP2, TP2, CP2
+        axes = ("pipeline_model", "tensor_model", "context")
+        groups = {}
+        for index, axis in enumerate(axes):
+            for first in range(8):
+                if (first // (4, 2, 1)[index]) % 2:
+                    continue
+                members = [first, first + (4, 2, 1)[index]]
+                group = dist.new_group(members, backend="gloo", timeout=timeout)
+                if rank in members:
+                    groups[axis] = group
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            stream_module = _load_stream_module(monkeypatch)
+            for index, axis in enumerate(axes):
+                monkeypatch.setattr(
+                    stream_module.mpu,
+                    f"get_{axis}_parallel_rank",
+                    lambda index=index: coordinates[index],
+                    raising=False,
+                )
+                monkeypatch.setattr(stream_module.mpu, f"get_{axis}_parallel_world_size", lambda: 2, raising=False)
+                monkeypatch.setattr(
+                    stream_module.mpu, f"get_{axis}_parallel_group", lambda axis=axis: groups[axis], raising=False
+                )
+            calls = []
+            original_broadcast = dist.broadcast
+
+            def broadcast(tensor, src, group):
+                calls.append(group)
+                return original_broadcast(tensor, src=src, group=group)
+
+            monkeypatch.setattr(stream_module.dist, "broadcast", broadcast)
+            pp, tp, cp = coordinates
+            for broadcast_pp in (True, False):
+                calls.clear()
+                source = torch.arange(6, dtype=torch.bfloat16).reshape(2, 3) + (0 if broadcast_pp else 100 * pp)
+                expected = source.clone()
+                is_src = tp == cp == 0 and (pp == 0 or not broadcast_pp)
+                result = stream_module._bcast_known_tensor(
+                    source if is_src else None, is_src, source.dtype, source.shape, torch.device("cpu"), broadcast_pp
+                )
+                assert torch.equal(result, expected)
+                assert torch.equal(source, expected), "Source CPU tensor must remain unchanged"
+                assert calls.count(groups["context"]) == int(tp == 0)
+                assert calls.count(groups["tensor_model"]) == 1
+                assert calls.count(groups["pipeline_model"]) == int(broadcast_pp)
+    finally:
+        dist.destroy_process_group()
+
+
+def test_known_tensor_broadcast_cpu_processes(tmp_path):
+    torch.multiprocessing.spawn(
+        _known_tensor_broadcast_worker, args=(str(tmp_path / "rendezvous"),), nprocs=8, join=True
+    )
 
 
 def _mapped_file_identity(tensor):

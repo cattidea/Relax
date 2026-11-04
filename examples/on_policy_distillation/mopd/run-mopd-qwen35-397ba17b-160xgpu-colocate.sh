@@ -272,7 +272,10 @@ SGLANG_ARGS=(
     --sglang-max-mamba-cache-size 48
     --sglang-cuda-graph-backend-prefill disabled
     --sglang-router-policy cache_aware
-    --sglang-router-balance-abs-threshold 4
+    # Let the existing relative-load threshold trigger Student rebalancing
+    # without first requiring an absolute queue gap of four requests.
+    # This does not guarantee equal queues or eliminate all rollout tails.
+    --sglang-router-balance-abs-threshold 0
     --rollout-engine-init-timeout 3600
     --sglang-dist-timeout 3600
     --sglang-watchdog-timeout 3600

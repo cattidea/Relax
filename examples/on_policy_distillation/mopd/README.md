@@ -157,7 +157,7 @@ rollout 阶段按每条样本的 `data_source` 找到对应教师，请求 token
 Student 2P3D、TP4/PP5/CP8/EP32/ETP1、层数6/17/17/17/3、full/uniform/1重算。
 每个后续提交对应下表的一项功能；收益是历史实验观测，不是本次机器上的重新测量。
 
-当前入口默认：GBS160、mixed5（Decode Graph开、HiCache关）、6/14/14/14/12、full重算、256MiB同步buffer、Router阈值4。
+当前入口默认：GBS160、mixed5（Decode Graph开、HiCache关）、6/14/14/14/12、full重算、256MiB同步buffer、Router阈值0。
 
 ### 使用与数据
 
@@ -199,3 +199,4 @@ Mooncake的metacache关闭和20000–22000端口范围已由003 wrapper并入入
 | 03 | e3931d9；008 | PP0同机8 rank共享一份像素；GBS320像素容量模型977→122GiB/台（非整机峰值）。008完成10轮GBS160，入口默认升至160。 |
 | 04 | 010配置 | 五个mixed Student、Decode Graph开、HiCache关、buffer256MiB；008→010观测rollout2387.84→1002.10秒，不能分别归因于上述组合变量。旧PD配置保留于baseline提交。 |
 | 05 | 011→012 | PP从6/17/17/17/3调整为6/14/14/14/12；正常轮训练638.56→526.43秒（−17.56%），各一轮测速，不保证固定收益。 |
+| 06 | 7e8a5ae；013→014 | Router绝对阈值4→0，沿用相对阈值；R1/R2窗口rollout2040.41→1808.43秒（−11.37%），不是严格均分保证。 |

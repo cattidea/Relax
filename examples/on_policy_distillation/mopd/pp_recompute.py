@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Relax Authors. All Rights Reserved.
 
-"""PP5 MOPD recompute: PP3 selective, other stages full."""
+"""PP5 MOPD recompute: PP2/PP3 selective, other stages full."""
 
 from argparse import Namespace
 from typing import Any
@@ -15,7 +15,7 @@ def configure(args: Namespace) -> None:
     assert mpu.get_virtual_pipeline_model_parallel_world_size() is None, "MOPD PP5 does not use VPP"
     assert (args.recompute_granularity, args.recompute_method, args.recompute_num_layers) == ("full", "uniform", 1)
     pp_rank = mpu.get_pipeline_model_parallel_rank()
-    if pp_rank == 3:
+    if pp_rank in (2, 3):
         args.recompute_granularity = "selective"
         args.recompute_method = None
         args.recompute_num_layers = None
@@ -55,7 +55,7 @@ def before_train_step(
     assert len(chunks) == 1, "MOPD PP5 expects one model chunk"
     chunk = chunks[0]
     pp_rank = mpu.get_pipeline_model_parallel_rank()
-    selective = pp_rank == 3
+    selective = pp_rank in (2, 3)
     decoder = chunk.language_model.decoder
     config = decoder.config
     expected = ("selective", None, None) if selective else ("full", "uniform", 1)

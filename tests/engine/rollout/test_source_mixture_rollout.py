@@ -10,6 +10,7 @@ from collections.abc import Callable
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import numpy as np
 import pytest
 
 from relax.utils.types import Sample
@@ -17,6 +18,7 @@ from relax.utils.types import Sample
 
 try:
     from relax.engine.rollout import sglang_rollout
+    from relax.utils import utils as rollout_utils
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"ray", "sglang", "sglang_router", "pybase64"}:
         raise
@@ -28,6 +30,8 @@ def _args() -> Namespace:
         rollout_global_dataset=True,
         rollout_source_mixture="mixture.yaml",
         source_mixture_quotas={"A": 3, "B": 1},
+        rollout_shuffle=True,
+        rollout_seed=42,
         opd_teacher_key="data_source",
         dynamic_sampling_filter_path=None,
         fully_async=False,
@@ -90,13 +94,21 @@ def rollout_harness(monkeypatch: pytest.MonkeyPatch) -> Callable:
         state.submit_generate_tasks = Mock(side_effect=submit)
         current_batch = []
         puts = []
+        client = SimpleNamespace(async_put=AsyncMock())
 
         async def transfer(args: Namespace, batch: list[list[Sample]], size: int, *pos: object, **kw: object) -> None:
             assert len(completed) == 4  # No partial batch is submitted before all sources finish.
             puts.append(batch)
-            current_batch.extend(sample for group in batch for sample in group)
+            await rollout_utils.transfer_batch_to_data_system(args, batch, size, *pos, **kw)
 
         source = SimpleNamespace(get_samples=SimpleNamespace(remote=Mock(return_value=groups)))
+        monkeypatch.setattr(rollout_utils, "CURRENT_ROLLOUT_BATCH", current_batch)
+        monkeypatch.setattr(
+            rollout_utils,
+            "convert_samples_to_train_data",
+            lambda args, samples: SimpleNamespace(numel=lambda: len(samples), indices=[s.index for s in samples]),
+        )
+        monkeypatch.setattr(rollout_utils, "build_rollout_custom_meta", Mock(return_value={}))
         monkeypatch.setattr(sglang_rollout, "GenerateState", lambda args: state)
         # Expected fatal batches must not leave the process-wide timer running
         # and contaminate later test cases.
@@ -111,17 +123,17 @@ def rollout_harness(monkeypatch: pytest.MonkeyPatch) -> Callable:
         monkeypatch.setattr(sglang_rollout, "_log_rollout_data", Mock())
         monkeypatch.setattr(sglang_rollout, "tqdm", Mock())
 
-        async def run() -> object:
+        async def run(args: Namespace | None = None, rollout_id: int = 0) -> object:
             try:
                 return await asyncio.wait_for(
-                    sglang_rollout.generate_rollout_async(_args(), 0, source, object()), timeout=5
+                    sglang_rollout.generate_rollout_async(args or _args(), rollout_id, source, client), timeout=5
                 )
             finally:
                 for task in state.pendings:
                     task.cancel()
                 await asyncio.gather(*state.pendings, return_exceptions=True)
 
-        return SimpleNamespace(run=run, source=source, state=state, puts=puts, completed=completed)
+        return SimpleNamespace(run=run, source=source, state=state, puts=puts, completed=completed, client=client)
 
     return make
 
@@ -135,11 +147,49 @@ async def test_source_mixture_rollout_commits_exact_quotas_despite_completion_or
     assert harness.completed[0] == 3
     assert len(harness.puts) == 1
     assert Counter(group[0].metadata["data_source"] for group in output.samples) == {"A": 3, "B": 1}
+    assert harness.client.async_put.await_args.kwargs["data"].indices == [0, 1, 2, 3]
     assert buffered == []
     if cached:
         harness.source.get_samples.remote.assert_not_called()
     else:
         harness.source.get_samples.remote.assert_called_once_with(4, rollout_id=0)
+
+
+@pytest.mark.parametrize("mixture,shuffle", [(True, True), (True, False), (False, True)])
+async def test_source_mixture_shuffle_only_changes_submission_order(
+    rollout_harness: Callable, mixture: bool, shuffle: bool
+) -> None:
+    args = _args()
+    args.rollout_source_mixture = args.rollout_source_mixture if mixture else None
+    args.rollout_shuffle = shuffle
+    orders = []
+    rng_before = np.random.get_state()
+    for rollout_id in (0, 0, 1):
+        groups = _groups()
+        for (sample,) in groups:
+            sample.metadata["_source_mixture_batch_id"] = rollout_id
+        originals = tuple(groups)
+        harness = rollout_harness(groups, cached=True)
+        _, buffered = await harness.run(args, rollout_id)
+        submitted = harness.state.submit_generate_tasks.call_args.args[0]
+        order = [group[0].index for group in submitted]
+        orders.append(order)
+        assert all(group is originals[group[0].index] for group in submitted)
+        assert all(group is original for group, original in zip(groups, originals, strict=True))
+        assert [group[0].group_index for group in submitted] == order
+        assert Counter(group[0].metadata["data_source"] for group in submitted) == {"A": 3, "B": 1}
+        assert harness.client.async_put.await_args.kwargs["data"].indices == [0, 1, 2, 3]
+        assert buffered == []
+    assert orders[0] == orders[1]  # Resume/retry preserves the submission order.
+    if mixture and shuffle:
+        assert orders[0] != [0, 1, 2, 3]
+        assert orders[0] != orders[2]
+    else:
+        assert orders == [[0, 1, 2, 3]] * 3
+    rng_after = np.random.get_state()
+    assert rng_before[0] == rng_after[0]
+    np.testing.assert_array_equal(rng_before[1], rng_after[1])
+    assert rng_before[2:] == rng_after[2:]
 
 
 @pytest.mark.parametrize("failure", ["short", "wrong_source", "wrong_batch", "duplicate"])

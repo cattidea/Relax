@@ -1008,6 +1008,10 @@ async def generate_rollout_async(
             samples = await loop.run_in_executor(None, ray.get, ref)
             if source_mixture:
                 validate_source_mixture_batch(args, samples, rollout_id)
+                if args.rollout_shuffle:
+                    # Interleave sources at submission; keep IDs and within-group order for training.
+                    order = np.random.default_rng(args.rollout_seed + rollout_id).permutation(len(samples))
+                    samples = [samples[i] for i in order]
 
             get_samples_times.append(monotonic() - _t_get_samples)
             state.submit_generate_tasks(samples)

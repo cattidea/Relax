@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Relax Authors. All Rights Reserved.
 # 397B MOPD baseline: 20 nodes x 8 GPUs, train and inference share the GPU pool.
 # Rollout: five mixed Student engines (5 x 16 GPUs) + five Teachers (5 x 16 GPUs).
-# Train: TP4 / PP5 / CP8 / EP32 / ETP1; layers 6/14/14/14/12; PP2/PP3 selective, other stages full.
+# Train: TP4 / PP5 / CP8 / EP32 / ETP1; layers 6/14/14/14/12; PP1 block10, PP2/PP3 selective, PP0/PP4 full.
 # Defaults: GBS160, N=1, 10 rollouts; source weights 1:2:3:4:5.
 # Set MODEL_DIR, DATA_DIR and MEGATRON; see README.md for the tested runtime.
 # Connect to the existing Ray cluster; do not start or clean up the cluster.

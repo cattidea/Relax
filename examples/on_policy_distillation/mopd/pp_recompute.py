@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Relax Authors. All Rights Reserved.
 
-"""PP5 MOPD recompute: PP2/PP3 selective, other stages full."""
+"""PP5 MOPD recompute: PP1 block10, PP2/PP3 selective, PP0/PP4 full."""
 
 from argparse import Namespace
 from typing import Any
@@ -15,7 +15,12 @@ def configure(args: Namespace) -> None:
     assert mpu.get_virtual_pipeline_model_parallel_world_size() is None, "MOPD PP5 does not use VPP"
     assert (args.recompute_granularity, args.recompute_method, args.recompute_num_layers) == ("full", "uniform", 1)
     pp_rank = mpu.get_pipeline_model_parallel_rank()
-    if pp_rank in (2, 3):
+    if pp_rank == 1:
+        # Checkpoint local layers 1-10 (global 7-16); retain activations for 17-20.
+        # Native full/block gives these last four layers no selective protection.
+        args.recompute_method = "block"
+        args.recompute_num_layers = 10
+    elif pp_rank in (2, 3):
         args.recompute_granularity = "selective"
         args.recompute_method = None
         args.recompute_num_layers = None
@@ -59,6 +64,8 @@ def before_train_step(
     decoder = chunk.language_model.decoder
     config = decoder.config
     expected = ("selective", None, None) if selective else ("full", "uniform", 1)
+    if pp_rank == 1:
+        expected = ("full", "block", 10)
     assert (config.recompute_granularity, config.recompute_method, config.recompute_num_layers) == expected
     if selective:
         assert set(config.recompute_modules) == {"gdn", "core_attn", "moe_act", "layernorm"}

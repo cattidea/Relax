@@ -34,6 +34,7 @@ actor 卡池（一整块 placement group，大小 = ACTOR_GPUS）
 | `run-mopd-qwen3-vl-2b-8xgpu-colocate.sh`    | 学生 2B，单机 8 卡，教师多副本 | 8 / 4 / 4（2 教师 × 2 副本，各 TP=1）       |
 | `run-mopd-qwen35-9b-8xgpu-colocate.sh`      | 学生 9B，单机 8 卡             | 8 / 4 / 4（2 教师各 TP=2，1 副本）          |
 | `run-mopd-qwen35-35ba3b-16xgpu-colocate.sh` | 学生 35B-A3B，2 节点 16 卡     | 16 / 8 / 8（TP=4 PP=2 EP=8；2 教师各 TP=4） |
+| `run-mopd-qwen35-397ba17b-160xgpu-colocate.sh` | 学生397B，20节点160卡 | 160 / 80 / 80（5 Teacher，各16卡） |
 
 ### 8 卡布局（`run-mopd-qwen3-vl-2b-8xgpu-colocate.sh`，教师多副本）
 
@@ -149,3 +150,48 @@ rollout 阶段按每条样本的 `data_source` 找到对应教师，请求 token
 
 - [On-Policy Distillation - Relax Docs](../README.md)
 - [OPD 参数配置示例](../README.md#common-combinations)
+
+## 397B：10/17 基线与逐项优化
+
+本分支从 `3805d95` 重建，只迁入 1017 实验验证过的实现。初始入口复现003：GBS40、
+Student 2P3D、TP4/PP5/CP8/EP32/ETP1、层数6/17/17/17/3、full/uniform/1重算。
+每个后续提交对应下表的一项功能；收益是历史实验观测，不是本次机器上的重新测量。
+
+当前入口默认：GBS40、2P3D、6/17/17/17/3、full重算、128MiB同步buffer、Router阈值4。
+
+### 使用与数据
+
+在已准备好的160卡Ray集群上，由使用者执行：
+
+```bash
+MODEL_DIR=/shared/models DATA_DIR=/shared/data MEGATRON=/path/to/tested/Megatron-LM \
+  bash examples/on_policy_distillation/mopd/run-mopd-qwen35-397ba17b-160xgpu-colocate.sh
+```
+
+`SOURCE_1_DATA` 至 `SOURCE_5_DATA`、`TEACHER_1_MODEL` 至 `TEACHER_5_MODEL` 可分别覆盖；
+默认Teacher权重路径与Student相同，但启动五个独立服务。数据沿用已有prompt/label/images/
+extra_info schema；行内data_source可省略，存在时必须匹配teacherN。源配比由YAML的
+weight决定，与文件条数无关；每来源独立shuffle/循环，超长样本同源补齐。
+1:2:3:4:5在GBS40/160/320下的配额分别为3/5/8/11/13、11/21/32/43/53、21/43/64/85/107。
+
+`BATCH_SIZE`、`NUM_ROLLOUT`、`LOG_DIR`、`SGLANG_CONFIG`可覆盖。默认不保存checkpoint；
+显式设置`SAVE_INTERVAL>0`时还需`SAVE_DIR`与稳定`EXP_NAME`。完整续训仍需独立验收。
+脚本连接现有Ray，不安装依赖、不清理集群、不启用数值dump或实验监控。
+
+### 运行环境边界
+
+003运行快照：Python3.12.3、torch2.11.0+cu129、Ray2.56.1.2、SGLang0.5.17、
+sglang-router0.3.2+slime.dpaware、mooncake-transfer-engine0.3.12.post1、ClearML2.1.3。
+必须使用1017实验的实际Megatron/Bridge运行环境；当时没有Megatron Git元数据，
+不能由Relax提交号或仓库Dockerfile推定其内容。不要为了迁移自动升级依赖或重建最新镜像。
+Mooncake的metacache关闭和20000–22000端口范围已由003 wrapper并入入口。
+
+历史日志与分析保留在`1017/experiments/`各编号目录，不复制进业务源码。迁移只复用原有
+回归测试；按用户资源约束，本机不运行训练、Ray、测试及全仓hooks，需在目标环境复验。
+已知Student非法概率、Teacher非有限logprob、Router偶发失败和退出Gloo噪音尚未根治。
+
+### 提交与证据
+
+| 步骤 | 来源 | 改动与已知收益 |
+| --- | --- | --- |
+| 01 | 003；ac26675、087421e | 完整baseline：按来源配额采样、Teacher双节点、397B入口；历史GBS40完成10轮/400条，无提速归因。 |

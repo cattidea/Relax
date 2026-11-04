@@ -1,0 +1,24 @@
+# Copyright (c) 2026 Relax Authors. All Rights Reserved.
+# 五个来源固定对应五个 Teacher；文件条数不决定每个 batch 的来源配比。
+# 当前 weight=1:2:3:4:5：BS160 配额为11/21/32/43/53。
+# 修改 weight 可改变配比；非整数配额按最大余数法确定性分配。
+# 确保每个来源的配额至少为1，才能保证每 batch 涉及全部五个 Teacher。
+# 每个来源独立 shuffle / 循环，超长样本从同来源补齐。
+# 路径由启动脚本导出，可用 SOURCE_1_DATA ... SOURCE_5_DATA 替换真实数据。
+# 原行可省略 data_source；若存在，必须与这里的 teacherN 一致。
+sources:
+  teacher1:
+    path: ${SOURCE_1_DATA}
+    weight: 1
+  teacher2:
+    path: ${SOURCE_2_DATA}
+    weight: 2
+  teacher3:
+    path: ${SOURCE_3_DATA}
+    weight: 3
+  teacher4:
+    path: ${SOURCE_4_DATA}
+    weight: 4
+  teacher5:
+    path: ${SOURCE_5_DATA}
+    weight: 5

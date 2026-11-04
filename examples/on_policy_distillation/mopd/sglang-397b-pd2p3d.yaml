@@ -1,0 +1,24 @@
+# Copyright (c) 2026 Relax Authors. All Rights Reserved.
+# Student: 2 Prefill + 3 Decode engines, 16 GPUs / 2 nodes per engine.
+# Teacher allocation and training parameters come from the unchanged MOPD recipe.
+sglang:
+  - name: default
+    num_gpus_per_engine: 16
+    engine_groups:
+      - worker_type: prefill
+        num_gpus: 32
+        overrides:
+          load_balance_method: total_tokens
+          enable_hierarchical_cache: true
+          hicache_ratio: 2
+          hicache_write_policy: write_through
+          cuda_graph_backend_decode: disabled
+          disaggregation_transfer_backend: mooncake
+      - worker_type: decode
+        num_gpus: 48
+        overrides:
+          # Mamba PD decode uses chunk cache; HiCache is unsupported here.
+          enable_hierarchical_cache: false
+          cuda_graph_backend_decode: full
+          cuda_graph_bs_decode: [2]
+          disaggregation_transfer_backend: mooncake

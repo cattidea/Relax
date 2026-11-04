@@ -190,6 +190,21 @@ Mooncake的metacache关闭和20000–22000端口范围已由003 wrapper并入入
 回归测试；按用户资源约束，本机不运行训练、Ray、测试及全仓hooks，需在目标环境复验。
 已知Student非法概率、Teacher非有限logprob、Router偶发失败和退出Gloo噪音尚未根治。
 
+### GDN旧运行时补丁
+
+`docker/patch/megatron/gdn-thd-route-reuse.patch`对应015/016实测实现，必须配套部署到
+每个训练节点的旧Megatron；提交此文件不等于运行环境已经安装。新式native route API不在
+本分支的适配范围，不覆盖新版本。旧环境版本标签0.19.0，精确Git提交未知，以文件SHA核对：
+
+| Megatron相对路径 | 修改前SHA256 | 修改后SHA256 |
+| --- | --- | --- |
+| `megatron/core/context_parallel_layout.py` | `75e645235aeaa2909895ee43169eeedfeffada95f57987e93d6205bc672a9ec5` | `0450ef5a7bb6143bd9f4d92fa7474fc24dea63cdd3b7e9b04ebf47fa14c37d38` |
+| `megatron/core/ssm/gated_delta_net.py` | `137d3b2fa1f3a34a0174a1bfef5f9186dfb93994f05f2a1b08f17bf751fe7671` | `165ef2c961a7858605865b05774aad97bf85b6a3724dbc07c80fac4afb37d882` |
+
+确认修改前SHA一致后，可在对应Megatron目录使用`patch --dry-run --fuzz=0 -p1`检查该补丁，
+再正式应用并核对修改后SHA；已匹配修改后SHA的节点无需重复应用。两方向路由只在同一微批
+跨层/重计算复用，不跨微批复用，也未验收训练CUDA Graph或真实GPU逐张量等价A/B。
+
 ### 提交与证据
 
 | 步骤 | 来源 | 改动与已知收益 |
@@ -200,3 +215,4 @@ Mooncake的metacache关闭和20000–22000端口范围已由003 wrapper并入入
 | 04 | 010配置 | 五个mixed Student、Decode Graph开、HiCache关、buffer256MiB；008→010观测rollout2387.84→1002.10秒，不能分别归因于上述组合变量。旧PD配置保留于baseline提交。 |
 | 05 | 011→012 | PP从6/17/17/17/3调整为6/14/14/14/12；正常轮训练638.56→526.43秒（−17.56%），各一轮测速，不保证固定收益。 |
 | 06 | 7e8a5ae；013→014 | Router绝对阈值4→0，沿用相对阈值；R1/R2窗口rollout2040.41→1808.43秒（−11.37%），不是严格均分保证。 |
+| 07 | d0295fe；014→016 | 同微批GDN路由构造40→2次，跨层及重算复用；训练547.37→479.19秒（−12.46%）。保留旧Megatron补丁，需所有训练节点配套。 |

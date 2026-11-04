@@ -223,6 +223,8 @@ PERF_ARGS=(
     --tensor-model-parallel-size 4
     --pipeline-model-parallel-size 5
     --context-parallel-size 8
+    # Apply gdn-thd-route-reuse.patch to the matching old Megatron runtime on all nodes.
+    # This recipe does not install or upgrade dependencies; see README.md.
     --linear-cp-mode chunkwise
     --seq-length "${CONTEXT_LEN}"
     --expert-model-parallel-size 32

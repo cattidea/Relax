@@ -20,6 +20,9 @@ from relax.backends.megatron.cp_utils import gdn_cp_slice, slice_with_cp  # noqa
 
 
 DIRECTIONS = [("zigzag", "contiguous"), ("contiguous", "zigzag")]
+# GDN route-reuse training requires docker/patch/megatron/gdn-thd-route-reuse.patch
+# applied to Megatron on every training node; Relax does not apply it automatically.
+# Without the route API, these regressions are skipped, not validated.
 requires_legacy_routes = pytest.mark.skipif(
     not hasattr(cpl, "build_thd_cp_partition_route"),
     reason="requires the legacy direction-specific route and cache API",
@@ -577,3 +580,172 @@ def test_native_routes_reject_invalid_packed_boundaries(native_routes):
     ):
         with pytest.raises(ValueError, match=match):
             native_routes.build_thd_cp_partition_route(cu, 4, 0)
+
+
+@requires_legacy_routes
+def test_route_cache_survives_interleaved_batches_and_refreshes_a_copied_batch():
+    from copy import copy
+
+    first_cu = _cu([3, 1], unit=8)
+    second_cu = _cu([2, 2], unit=8)
+    first, second = _packed_seq_params(first_cu), _packed_seq_params(second_cu)
+    route = cpl.get_thd_cp_partition_route(first, first_cu, 4, 1, "zigzag", "contiguous")
+    other = cpl.get_thd_cp_partition_route(second, second_cu, 4, 1, "zigzag", "contiguous")
+    assert other is not route
+    assert cpl.get_thd_cp_partition_route(first, first_cu, 4, 1, "zigzag", "contiguous") is route
+
+    copied = copy(first)
+    copied.cu_seqlens_q = copied.cu_seqlens_kv = second_cu
+    refreshed = cpl.get_thd_cp_partition_route(copied, second_cu, 4, 1, "zigzag", "contiguous")
+    assert refreshed is not route
+    assert refreshed.input_split_sizes == other.input_split_sizes
+    assert refreshed.output_split_sizes == other.output_split_sizes
+    assert cpl.get_thd_cp_partition_route(first, first_cu, 4, 1, "zigzag", "contiguous") is route
+
+
+@requires_legacy_routes
+def test_route_cache_rebuilds_indices_for_a_different_device_without_cuda():
+    cu = _cu([3, 1], unit=8)
+    packed = _packed_seq_params(cu)
+    source, target = "contiguous", "zigzag"
+    original = cpl.get_thd_cp_partition_route(packed, cu, 4, 1, source, target)
+    # Meta validates device-dependent indices without allocating CUDA memory.
+    meta = cpl.get_thd_cp_partition_route(packed, cu, 4, 1, source, target, device=torch.device("meta"))
+    assert meta is not original
+    indices = meta.send_rows if meta.send_rows is not None else meta.recv_rows
+    assert indices is not None and indices.device.type == "meta"
+    restored = cpl.get_thd_cp_partition_route(packed, cu, 4, 1, source, target)
+    assert restored is not meta
+    for name in ("send_rows", "recv_rows"):
+        actual, expected = getattr(restored, name), getattr(original, name)
+        assert (actual is None) == (expected is None)
+        if actual is not None:
+            assert torch.equal(actual, expected)
+
+
+def _checkpoint_route_gloo_worker(rank, init_method, module_path):
+    import gc
+    import importlib.util
+    import weakref
+    from datetime import timedelta
+    from unittest.mock import patch
+
+    import torch.distributed as dist
+    from torch.distributed.nn.functional import all_to_all_single
+    from torch.utils.checkpoint import checkpoint
+
+    # Load the same dependency revision as the parent, including an isolated review copy.
+    spec = importlib.util.spec_from_file_location("gdn_layout_under_test", module_path)
+    layout = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(layout)
+    torch.set_num_threads(1)
+    dist.init_process_group("gloo", init_method=init_method, rank=rank, world_size=2, timeout=timedelta(seconds=60))
+    group = dist.group.WORLD
+
+    def cpu_all_to_all(cp_group, value, output_split_sizes, input_split_sizes):
+        # MCore's collective allocates on CUDA; use PyTorch's real CPU collective/autograd boundary.
+        output = value.new_empty((sum(output_split_sizes),) + tuple(value.shape[1:]))
+        return all_to_all_single(output, value, output_split_sizes, input_split_sizes, group=cp_group)
+
+    try:
+        with patch.object(layout, "all_to_all", cpu_all_to_all):
+            for use_reentrant, seq_dim in ((True, 0), (False, 1)):
+                cu = _cu([3, 0, 1], unit=4)
+                packed = _packed_seq_params(cu)
+                full = torch.arange(int(cu[-1]) * 3, dtype=torch.float64).reshape(-1, 3) / 100
+                zigzag = _native_rank_indices(cu, 2, rank, "zigzag")
+                contiguous = _native_rank_indices(cu, 2, rank, "contiguous")
+                initial = full[zigzag].movedim(0, seq_dim).clone().requires_grad_(True)
+                activation_ref = weakref.ref(initial)
+
+                def forward(value, packed_params=packed):
+                    for layer in range(2):
+                        to_contiguous = layout.get_thd_cp_partition_route(
+                            packed_params, cu, 2, rank, "zigzag", "contiguous"
+                        )
+                        to_zigzag = layout.get_thd_cp_partition_route(
+                            packed_params, cu, 2, rank, "contiguous", "zigzag"
+                        )
+                        value = layout.zigzag_to_contiguous_chunks(
+                            value, group, seq_dim, cu, thd_cp_partition_route=to_contiguous
+                        )
+                        assert torch.equal(value, full.pow(2**layer)[contiguous].movedim(0, seq_dim))
+                        value = layout.contiguous_to_zigzag_chunks(
+                            value.square(), group, seq_dim, cu, thd_cp_partition_route=to_zigzag
+                        )
+                    return value
+
+                with patch.object(
+                    layout, "build_thd_cp_partition_route", wraps=layout.build_thd_cp_partition_route
+                ) as build:
+                    result = checkpoint(forward, initial, use_reentrant=use_reentrant)
+                    assert torch.equal(result, initial.square().square())
+                    result.sum().backward()
+                    torch.testing.assert_close(initial.grad, 4 * initial.detach().pow(3), rtol=1e-12, atol=1e-12)
+                    assert build.call_count == 2, "both layers and checkpoint replay must share two directional routes"
+
+                # Keeping metadata alive must not retain consumed activations.
+                del result, initial
+                gc.collect()
+                assert activation_ref() is None
+                route_refs = [
+                    weakref.ref(rows)
+                    for route in (
+                        packed.cp_partition_route_zigzag_to_contiguous,
+                        packed.cp_partition_route_contiguous_to_zigzag,
+                    )
+                    for rows in (route.send_rows, route.recv_rows)
+                    if rows is not None
+                ]
+                del forward, packed
+                gc.collect()
+                assert all(ref() is None for ref in route_refs), "route indices must die with the microbatch"
+    finally:
+        dist.destroy_process_group()
+
+
+@requires_legacy_routes
+@pytest.mark.skipif(not torch.distributed.is_gloo_available(), reason="requires CPU Gloo")
+def test_routes_preserve_gradients_and_cache_lifetime_through_real_checkpoint(tmp_path):
+    import torch.multiprocessing as mp
+
+    mp.spawn(
+        _checkpoint_route_gloo_worker,
+        args=((tmp_path / "gloo-rendezvous").as_uri(), cpl.__file__),
+        nprocs=2,
+        join=True,
+    )
+
+
+@requires_legacy_routes
+def test_route_cache_remains_usable_after_batch_device_transfer():
+    from relax.backends.megatron.data import move_tensors_to_device
+
+    cu = _cu([3, 1], unit=8)
+    packed = _packed_seq_params(cu)
+    original = cpl.get_thd_cp_partition_route(packed, cu, 4, 1, "contiguous", "zigzag")
+    moved = move_tensors_to_device(packed, torch.device("cpu"))
+    route = cpl.get_thd_cp_partition_route(moved, moved.cu_seqlens_q, 4, 1, "contiguous", "zigzag")
+    assert route.input_split_sizes == original.input_split_sizes
+    assert route.output_split_sizes == original.output_split_sizes
+    assert torch.equal(route.send_rows, original.send_rows)
+
+
+@requires_legacy_routes
+@pytest.mark.parametrize("source,target", DIRECTIONS)
+def test_route_built_during_inference_can_later_participate_in_autograd(source, target):
+    cu = _cu([3, 1], unit=8)  # Versioned tensor, unlike the inference-only boundary case above.
+    packed = _packed_seq_params(cu)
+    with torch.inference_mode():
+        cpl.get_thd_cp_partition_route(packed, cu, 4, 1, source, target)
+    route = cpl.get_thd_cp_partition_route(packed, cu, 4, 1, source, target)
+    value = torch.arange(route.local_source_length, dtype=torch.float64).requires_grad_(True)
+    # Exercise the real gather/scatter autograd save, which rejects inference indices.
+    rows = route.send_rows if route.send_rows is not None else route.recv_rows
+    assert rows is not None
+    if route.send_rows is not None:
+        output = value.index_select(0, rows)
+    else:
+        output = torch.empty_like(value).index_copy_(0, rows, value)
+    output.sum().backward()
+    assert torch.equal(value.grad, torch.ones_like(value))

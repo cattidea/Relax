@@ -1,11 +1,14 @@
 #!/bin/bash
 # Copyright (c) 2026 Relax Authors. All Rights Reserved.
-# 397B MOPD baseline: 20 nodes x 8 GPUs, train and inference share the GPU pool.
-# Rollout: five mixed Student engines (5 x 16 GPUs) + five Teachers (5 x 16 GPUs).
-# Train: TP4 / PP5 / CP8 / EP32 / ETP1; layers 6/14/14/14/12; PP1 block10, PP2/PP3 selective, PP0/PP4 full.
-# Defaults: GBS160, N=1, 10 rollouts; source weights 1:2:3:4:5.
-# Set MODEL_DIR, DATA_DIR and MEGATRON; see README.md for the tested runtime.
-# Connect to the existing Ray cluster; do not start or clean up the cluster.
+# 397B 多教师在线蒸馏：20机×8卡，训练与推理分时复用同一160卡池。
+# Rollout：5个混合Student引擎×16卡，加5个独立Teacher×16卡。
+# 训练：TP4 / PP5 / CP8 / EP32 / ETP1，层数6/14/14/14/12；
+# PP1前10层full重算、尾4层免重算，PP2/PP3 selective，PP0/PP4保持full。
+# 默认对齐027的容量设置：GBS320、TMS恢复后释放CPU备份开启、TMS日志级别2。
+# N=1，来源权重1:2:3:4:5，每轮配额21/43/64/85/107；默认10轮，可用NUM_ROLLOUT覆盖。
+# 027实际验证了4轮；这里的默认轮数不代表已完成10轮同配置验收。
+# 先设置MODEL_DIR、DATA_DIR、MEGATRON；旧运行环境与补丁要求见README.md。
+# 仅连接已有Ray集群，不启动或清理集群。
 
 set -euo pipefail
 
@@ -44,15 +47,22 @@ export SGLANG_LOGPROB_CHUNK_SIZE="${SGLANG_LOGPROB_CHUNK_SIZE:-1024}"
 # 视觉编码器也参与训练，不能复用旧权重产生的图片 embedding。
 export SGLANG_VLM_CACHE_SIZE_MB=0
 export TORCH_DISTRIBUTED_DEFAULT_TIMEOUT=3600
-# 003 runtime: refresh colocate memory descriptors and avoid SGLang RPC ports.
+# 沿用003：共卡切换后刷新远端内存描述，Mooncake端口避开SGLang内部端口。
 export MC_DISABLE_METACACHE=1
 export MC_MIN_RPC_PORT="${MC_MIN_RPC_PORT:-20000}"
 export MC_MAX_RPC_PORT="${MC_MAX_RPC_PORT:-22000}"
+# 对齐027：模型恢复到GPU后，释放这份已不再需要的CPU备份；休眠模型的CPU备份仍保留。
+# 实测rollout阶段每台典型主机内存约省440 GiB，全流程单机观测峰约降228 GiB，非显存收益。
+# 代价是下次卸载要重新分配备份：Student约3→37秒、Teacher约3→38–42秒。
+# 默认开启；如需关闭可在启动前显式设置TMS_RELEASE_CPU_BACKUP_AFTER_RESUME=0。
+# 默认日志级别2记录TMS原生分配/释放摘要，不启用额外OOM监控或数值dump。
+export TMS_RELEASE_CPU_BACKUP_AFTER_RESUME="${TMS_RELEASE_CPU_BACKUP_AFTER_RESUME:-1}"
+export TMS_LOG_LEVEL="${TMS_LOG_LEVEL:-2}"
 # 多图的数据传输可能超过默认等待时间；超时增加不代表 I/O 变快。
 export TQ_SIMPLE_STORAGE_SEND_RECV_TIMEOUT="${TQ_SIMPLE_STORAGE_SEND_RECV_TIMEOUT:-900}"
 export NO_PROXY="${no_proxy:-${NO_PROXY:-}},localhost,127.0.0.1,10.0.0.0/8"
 export no_proxy="${NO_PROXY}"
-export RELAX_PROPAGATE_ENV_VARS="${RELAX_PROPAGATE_ENV_VARS:+${RELAX_PROPAGATE_ENV_VARS},}MASTER_ADDR,PYTHONUNBUFFERED,CUDA_DEVICE_MAX_CONNECTIONS,OMP_NUM_THREADS,MKL_NUM_THREADS,OPENBLAS_NUM_THREADS,LD_LIBRARY_PATH,NCCL_NVLS_ENABLE,SGLANG_MM_AVOID_RETOKENIZE,SGLANG_ENABLE_LOGPROB_CHUNK,SGLANG_LOGPROB_CHUNK_SIZE,SGLANG_VLM_CACHE_SIZE_MB,TORCH_DISTRIBUTED_DEFAULT_TIMEOUT,TQ_SIMPLE_STORAGE_SEND_RECV_TIMEOUT,NO_PROXY,no_proxy,MC_DISABLE_METACACHE,MC_MIN_RPC_PORT,MC_MAX_RPC_PORT,TENSORBOARD_DIR"
+export RELAX_PROPAGATE_ENV_VARS="${RELAX_PROPAGATE_ENV_VARS:+${RELAX_PROPAGATE_ENV_VARS},}MASTER_ADDR,PYTHONUNBUFFERED,CUDA_DEVICE_MAX_CONNECTIONS,OMP_NUM_THREADS,MKL_NUM_THREADS,OPENBLAS_NUM_THREADS,LD_LIBRARY_PATH,NCCL_NVLS_ENABLE,SGLANG_MM_AVOID_RETOKENIZE,SGLANG_ENABLE_LOGPROB_CHUNK,SGLANG_LOGPROB_CHUNK_SIZE,SGLANG_VLM_CACHE_SIZE_MB,TORCH_DISTRIBUTED_DEFAULT_TIMEOUT,TQ_SIMPLE_STORAGE_SEND_RECV_TIMEOUT,NO_PROXY,no_proxy,MC_DISABLE_METACACHE,MC_MIN_RPC_PORT,MC_MAX_RPC_PORT,TENSORBOARD_DIR,TMS_RELEASE_CPU_BACKUP_AFTER_RESUME,TMS_LOG_LEVEL"
 
 # 仅加载仓库自带的模型架构参数，不执行入口脚本的集群清理。
 source "${MODEL_CONFIG_DIR}/qwen35-397B-A17B.sh"
@@ -62,7 +72,9 @@ EXP_NAME="${EXP_NAME:-mopd-qwen35-397ba17b-160xgpu-mixed5-cp8-source-mixture}"
 now="$(date +%Y%m%d-%H%M%S)"
 LOG_DIR="${LOG_DIR:-${SCRIPT_DIR}/log/${EXP_NAME}-${now}}"
 NUM_ROLLOUT="${NUM_ROLLOUT:-10}"
-BATCH_SIZE="${BATCH_SIZE:-160}"
+# GBS同时用于rollout批量、采样候选批量和训练全局batch；不改变16K微批token预算。
+# 默认320，可显式设置BATCH_SIZE=160；调小GBS不会自动关闭上面的TMS开关。
+BATCH_SIZE="${BATCH_SIZE:-320}"
 MM_PROCESSOR_POOL_SIZE="${MM_PROCESSOR_POOL_SIZE:-8}"
 CONTEXT_LEN=131072
 MAX_RESPONSE_LEN="${MAX_RESPONSE_LEN:-4096}"
@@ -214,8 +226,8 @@ OPTIMIZER_ARGS=(
     --use-distributed-optimizer
     --accumulate-allreduce-grads-in-fp32
     --moe-router-load-balancing-type none
-    # 256 MiB buckets for training-to-Student weight synchronization (010 recipe).
-    # If temporary GPU memory is tight, reduce this value; no isolated speedup is claimed.
+    # 256 MiB分桶用于训练后向Student同步权重，沿用010配置。
+    # 如果同步阶段临时显存OOM，可尝试调小；该参数没有单独量化的提速结论。
     --update-weight-buffer-size 268435456
 )
 
@@ -223,8 +235,8 @@ PERF_ARGS=(
     --tensor-model-parallel-size 4
     --pipeline-model-parallel-size 5
     --context-parallel-size 8
-    # Apply gdn-thd-route-reuse.patch to the matching old Megatron runtime on all nodes.
-    # This recipe does not install or upgrade dependencies; see README.md.
+    # 所有训练节点须在匹配的旧Megatron中应用gdn-thd-route-reuse.patch。
+    # 本脚本不安装或升级依赖；补丁文件指纹与说明见README.md。
     --linear-cp-mode chunkwise
     --seq-length "${CONTEXT_LEN}"
     --expert-model-parallel-size 32
@@ -236,8 +248,8 @@ PERF_ARGS=(
     --recompute-granularity full
     --recompute-method uniform
     --recompute-num-layers 1
-    # Stage-specific policy is configured before model construction, then verified once.
-    # The hook matches 6/14/14/14/12; changing the layout requires a matching policy.
+    # 建模前设置各PP阶段的重算策略，建模后仅核验一次。
+    # hook对应6/14/14/14/12；调整切层时须同步核对重算策略。
     --custom-megatron-init-path examples.on_policy_distillation.mopd.pp_recompute.configure
     --custom-megatron-before-train-step-hook-path examples.on_policy_distillation.mopd.pp_recompute.before_train_step
     --response-only-lm-head
@@ -254,7 +266,7 @@ PERF_ARGS=(
 
 SGLANG_ARGS=(
     --rollout-num-gpus-per-engine 16
-    # Five mixed Student engines: Decode Graph enabled, HiCache disabled.
+    # 5个混合Student引擎：Decode CUDA Graph开启，HiCache关闭。
     --sglang-config "${SGLANG_CONFIG}"
     --sglang-ep-size 16
     --sglang-dp-size 8
@@ -279,9 +291,8 @@ SGLANG_ARGS=(
     --sglang-max-mamba-cache-size 48
     --sglang-cuda-graph-backend-prefill disabled
     --sglang-router-policy cache_aware
-    # Let the existing relative-load threshold trigger Student rebalancing
-    # without first requiring an absolute queue gap of four requests.
-    # This does not guarantee equal queues or eliminate all rollout tails.
+    # 绝对负载差阈值由4降到0，让已有相对负载阈值更早触发Student请求再均衡。
+    # 无需先积累4个请求的队列差，但不保证严格均分或消除全部长尾。
     --sglang-router-balance-abs-threshold 0
     --rollout-engine-init-timeout 3600
     --sglang-dist-timeout 3600
@@ -308,7 +319,7 @@ MISC_ARGS=(
 
 # actor 与 rollout/teacher 共用一个160卡池，不能把160+80+80算作320张物理卡。
 # 八个 TQ storage units 分摊多图 batch 的接收内存，但不消除图片张量本身。
-# PP0 pixel routing and host sharing were validated at GBS160 in experiment 008.
+# GBS320沿用PP0像素分发/单机共享，并默认开启027验证过的TMS备份释放。
 python3 -m relax.entrypoints.train \
     --resource '{"actor":[1,160],"rollout":[1,80],"teacher":[1,80]}' \
     --rollout-num-gpus 80 \

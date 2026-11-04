@@ -157,7 +157,7 @@ rollout 阶段按每条样本的 `data_source` 找到对应教师，请求 token
 Student 2P3D、TP4/PP5/CP8/EP32/ETP1、层数6/17/17/17/3、full/uniform/1重算。
 每个后续提交对应下表的一项功能；收益是历史实验观测，不是本次机器上的重新测量。
 
-当前入口默认：GBS160、mixed5（Decode Graph开、HiCache关）、6/14/14/14/12、PP1 block10、PP2/PP3 selective、PP0/PP4 full、response-only head、256MiB同步buffer、Router阈值0。
+当前入口默认：GBS320、mixed5（Decode Graph开、HiCache关）、6/14/14/14/12、PP1 block10、PP2/PP3 selective、PP0/PP4 full、response-only head、256MiB同步buffer、Router阈值0，TMS恢复后释放CPU备份开启（1）、日志级别2。
 
 ### 使用与数据
 
@@ -205,6 +205,23 @@ Mooncake的metacache关闭和20000–22000端口范围已由003 wrapper并入入
 再正式应用并核对修改后SHA；已匹配修改后SHA的节点无需重复应用。两方向路由只在同一微批
 跨层/重计算复用，不跨微批复用，也未验收训练CUDA Graph或真实GPU逐张量等价A/B。
 
+### GBS320 / TMS容量配置
+
+保持已安装的`torch_memory_saver`提交`afc13785c50119048e2dd8ac497cc9e29ec75bd4`及
+1017相同编译库；旧运行环境已经安装，不在本次迁移中升级。入口默认对齐027：
+`BATCH_SIZE=320 TMS_RELEASE_CPU_BACKUP_AFTER_RESUME=1 TMS_LOG_LEVEL=2`。
+这两个现有环境变量会传到Actor/Student/Teacher，不新增CLI。可显式设置
+`TMS_RELEASE_CPU_BACKUP_AFTER_RESUME=0`关闭备份释放；`BATCH_SIZE=160`只改batch，
+不会自动关闭TMS。两项均支持环境变量覆盖，日志级别也可独立覆盖。
+027实际完成4轮；入口默认`NUM_ROLLOUT=10`沿用业务示例，可设为4复用其轮数。
+GBS320改变每次更新的数据量，不是与GBS160数学等价的代码优化。
+
+026→027的R1–R3：rollout每台典型Host内存1085.10→645.57GiB，训练1109.99→927.95GiB；
+全流程单节点观测峰1417.70→1189.66GiB。均为Ray扣文件页缓存口径，不能与raw限额混比。
+代价：Student卸载约3→37秒，Teacher约3→38–42秒，Actor整组约7.67→56.67秒。
+027同时关闭checkpoint/额外诊断，不能将净吞吐+5.29%全部归为TMS提速。
+四轮容量验证不证明长期无泄漏，也不保证H800瞬时显存上界；两组并行卸载尚未实现。
+
 ### 提交与证据
 
 | 步骤 | 来源 | 改动与已知收益 |
@@ -224,3 +241,16 @@ Mooncake的metacache关闭和20000–22000端口范围已由003 wrapper并入入
 | 13 | 022；1f592b9拆分 | 同一个hook扩展PP2 selective；训练458.41→447.82秒（−2.31%），整步未提速；PP2 allocated24.43→54.71GiB。 |
 | 14 | 023；1f592b9 | PP1前10层full重算、尾4层免重算（不是全selective）；训练447.82→436.10秒（−2.62%），PP1整卡采样40.13→61.05GiB。 |
 | 15 | 3c0bba0；024起启用 | concat后清mini容器、backup前释放已消费batch；缩短CPU像素与备份重叠。026的52个save/update周期未见PP0像素映射，无独立GiB/秒归因。 |
+| 16 | 027实验配置 | 默认GBS320、TMS恢复后释放备份开启、日志级别2，可显式覆盖；复用已安装版本；rollout每台典型Host−439.54GiB、全流程单节点观测峰−228.05GiB，同时增加卸载耗时。 |
+
+### 本次迁移核对（2026-11-04）
+
+共16笔本地提交，来源为`1017/Relax@7e8a5ae`及003–027实验配置；无最新main实现混入。
+来源采样、Teacher编排、像素共享、媒体复用、GDN补丁、loss和最终重算hook已核对原版本
+文件内容一致。Actor/model/arguments未带入实验profiler接线与显存峰采样；仅整理了一处
+历史测试文件空白。入口的路径、默认值、环境接线和注释按上述提交顺序整理。
+
+已完成改动Python文件的静态语法解析、入口`bash -n`和差异空白核对；未导入训练依赖、
+未执行测试/全仓hooks/训练/Ray，也未修改安装的Megatron或TMS。目标原main保持`a155b62`，
+1017的HEAD、index和未提交差异保持原样。业务运行前仍须在相同旧环境复验，不把历史实测
+冒充本次迁移后的重新验证。

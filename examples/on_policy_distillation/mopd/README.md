@@ -223,3 +223,4 @@ Mooncake的metacache关闭和20000–22000端口范围已由003 wrapper并入入
 | 12 | c1d4e9f；019→021 | response-only lm_head：PP4 allocated31.63→22.94GiB（−8.69GiB），head局部kernel−90.62%，训练仅−0.41%；真实TP/fused梯度等价仍待专项验收。 |
 | 13 | 022；1f592b9拆分 | 同一个hook扩展PP2 selective；训练458.41→447.82秒（−2.31%），整步未提速；PP2 allocated24.43→54.71GiB。 |
 | 14 | 023；1f592b9 | PP1前10层full重算、尾4层免重算（不是全selective）；训练447.82→436.10秒（−2.62%），PP1整卡采样40.13→61.05GiB。 |
+| 15 | 3c0bba0；024起启用 | concat后清mini容器、backup前释放已消费batch；缩短CPU像素与备份重叠。026的52个save/update周期未见PP0像素映射，无独立GiB/秒归因。 |

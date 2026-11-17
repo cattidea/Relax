@@ -241,7 +241,8 @@ class TestWriteHfPeftAdapter:
             hf_key = key.removeprefix("base_model.model.").replace(".default.weight", ".weight")
             torch.testing.assert_close(value, expected[hf_key], rtol=0, atol=0)
 
-    def test_write_hf_peft_adapter_round_trip(self, tmp_path):
+    @pytest.mark.parametrize("mtp_projection", ["fc", "eh_proj"])
+    def test_write_hf_peft_adapter_round_trip(self, tmp_path, mtp_projection):
         """Writes a loadable HF-PEFT dir: config JSON + safetensors with same
         tensors."""
         from safetensors.torch import load_file
